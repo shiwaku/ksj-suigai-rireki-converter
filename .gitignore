@@ -2,6 +2,3 @@
 .venv/
 __pycache__/
 *.pyc
-
-# 生成物(convert.py で再生成可能)
-output/
