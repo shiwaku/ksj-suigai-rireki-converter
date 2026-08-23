@@ -47,6 +47,14 @@ PMTiles のみ Web メルカトルにタイル化される。
 - `typhoon_file` — ファイル名の `_t` サフィックス有無(台風性イベントと思われる)
 - `src_file` — 元 Shapefile 名
 
+## Web での閲覧
+
+PMTiles は GitHub Pages 経由で配信しており(Range Request / CORS 対応)、
+ブラウザでそのまま閲覧できる:
+
+- ビューア: <https://pmtiles.io/?url=https%3A%2F%2Fshiwaku.github.io%2Fksj-suigai-rireki-converter%2Foutput%2Fsinsui_all.pmtiles>
+- タイル URL: `https://shiwaku.github.io/ksj-suigai-rireki-converter/output/sinsui_all.pmtiles`
+
 ## 既知の注意点
 
 - PMTiles ドライバ(GDAL)は UTF-8 対応を宣言しないため、Windows では
