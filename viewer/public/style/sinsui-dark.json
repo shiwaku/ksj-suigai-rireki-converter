@@ -1,0 +1,173 @@
+{
+  "version": 8,
+  "name": "水害履歴・浸水実績（ダーク）",
+  "metadata": {
+    "ksj-suigai-rireki:generated-by": "viewer/scripts/export-style.mjs",
+    "ksj-suigai-rireki:source": "viewer/src/layers.ts の buildStyle()",
+    "ksj-suigai-rireki:note": "生成物。直接編集せず viewer/src/layers.ts を直して書き出し直すこと。"
+  },
+  "sources": {
+    "sinsui": {
+      "type": "vector",
+      "url": "pmtiles://https://shiwaku.github.io/ksj-suigai-rireki-converter/output/sinsui_all.pmtiles",
+      "attribution": "出典: <a href=\"https://nlftp.mlit.go.jp/ksj/\" target=\"_blank\" rel=\"noopener\">国土数値情報（水害履歴・浸水実績）国土交通省</a>を加工して作成"
+    }
+  },
+  "layers": [
+    {
+      "id": "background",
+      "type": "background",
+      "paint": {
+        "background-color": "#14161a"
+      }
+    },
+    {
+      "id": "sinsui_fill",
+      "type": "fill",
+      "source": "sinsui",
+      "source-layer": "sinsui",
+      "minzoom": 4,
+      "filter": [
+        "all",
+        [
+          ">=",
+          [
+            "coalesce",
+            [
+              "to-number",
+              [
+                "get",
+                "event_year"
+              ]
+            ],
+            0
+          ],
+          1896
+        ],
+        [
+          "<=",
+          [
+            "coalesce",
+            [
+              "to-number",
+              [
+                "get",
+                "event_year"
+              ]
+            ],
+            0
+          ],
+          2019
+        ]
+      ],
+      "paint": {
+        "fill-color": [
+          "step",
+          [
+            "coalesce",
+            [
+              "to-number",
+              [
+                "get",
+                "event_year"
+              ]
+            ],
+            0
+          ],
+          "#184f95",
+          1950,
+          "#256abf",
+          1970,
+          "#3987e5",
+          1980,
+          "#6da7ec",
+          2000,
+          "#cde2fb"
+        ],
+        "fill-opacity": 0.6,
+        "fill-antialias": true
+      }
+    },
+    {
+      "id": "sinsui_outline",
+      "type": "line",
+      "source": "sinsui",
+      "source-layer": "sinsui",
+      "minzoom": 4,
+      "filter": [
+        "all",
+        [
+          ">=",
+          [
+            "coalesce",
+            [
+              "to-number",
+              [
+                "get",
+                "event_year"
+              ]
+            ],
+            0
+          ],
+          1896
+        ],
+        [
+          "<=",
+          [
+            "coalesce",
+            [
+              "to-number",
+              [
+                "get",
+                "event_year"
+              ]
+            ],
+            0
+          ],
+          2019
+        ]
+      ],
+      "paint": {
+        "line-color": [
+          "step",
+          [
+            "coalesce",
+            [
+              "to-number",
+              [
+                "get",
+                "event_year"
+              ]
+            ],
+            0
+          ],
+          "#184f95",
+          1950,
+          "#256abf",
+          1970,
+          "#3987e5",
+          1980,
+          "#6da7ec",
+          2000,
+          "#cde2fb"
+        ],
+        "line-width": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          4,
+          0.4,
+          10,
+          0.8,
+          14,
+          1.4
+        ],
+        "line-opacity": 0.8999999999999999
+      }
+    }
+  ]
+}
