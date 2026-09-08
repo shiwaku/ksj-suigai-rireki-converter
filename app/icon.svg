@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="水害履歴ビューワ">
+  <rect width="512" height="512" rx="96" fill="#2a78d6"/>
+  <!-- 浸水域（年代の濃淡） -->
+  <path d="M96 300c40-26 74 14 114-6s60-40 100-22 66 34 106 12v134H96z" fill="#cde2fb" opacity=".55"/>
+  <path d="M96 348c44-24 76 16 116-4s58-36 98-20 66 32 106 10v82H96z" fill="#9ec5f4" opacity=".8"/>
+  <path d="M96 396c44-20 78 14 118-4s56-30 96-16 64 28 104 8v34H96z" fill="#ffffff"/>
+  <!-- 地形（陰影起伏の稜線） -->
+  <g fill="none" stroke="#ffffff" stroke-width="20" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M112 268 208 148l70 84 52-58 70 94"/>
+  </g>
+</svg>

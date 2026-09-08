@@ -49,11 +49,30 @@ PMTiles のみ Web メルカトルにタイル化される。
 
 ## Web での閲覧
 
-PMTiles は GitHub Pages 経由で配信しており(Range Request / CORS 対応)、
-ブラウザでそのまま閲覧できる:
+PMTiles は GitHub Pages 経由で配信している(Range Request / CORS 対応)。
 
-- ビューア: <https://pmtiles.io/?url=https%3A%2F%2Fshiwaku.github.io%2Fksj-suigai-rireki-converter%2Foutput%2Fsinsui_all.pmtiles>
+### 専用ビューワ
+
+<https://shiwaku.github.io/ksj-suigai-rireki-converter/app/>
+
+年代・期間・台風性・イベント単位での絞り込みと、
+[Mapterhorn](https://mapterhorn.com/) の全球地形(陰影起伏 / 3D地形 / 等高線)の
+重ね合わせができる。ソースと開発方法は [`viewer/`](viewer/) を参照。
+
+### 汎用ビューア
+
+- pmtiles.io: <https://pmtiles.io/?url=https%3A%2F%2Fshiwaku.github.io%2Fksj-suigai-rireki-converter%2Foutput%2Fsinsui_all.pmtiles>
 - タイル URL: `https://shiwaku.github.io/ksj-suigai-rireki-converter/output/sinsui_all.pmtiles`
+
+## リポジトリ構成
+
+| パス | 内容 |
+|---|---|
+| `convert.py` | Shapefile 一括変換ツール |
+| `data/` | 入力 Shapefile |
+| `output/` | 変換結果(Pages から配信) |
+| `viewer/` | Web ビューワのソース(Vite + TypeScript + MapLibre) |
+| `app/` | ビューワのビルド成果物(Pages から配信、`viewer` の `npm run build` が生成) |
 
 ## 既知の注意点
 
