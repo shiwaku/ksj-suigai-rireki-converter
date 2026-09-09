@@ -7,11 +7,12 @@
   "license": "Apache-2.0",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && npm run check:style && npm run check:search && npm run check:relief && npm run export:style && vite build",
+    "build": "tsc --noEmit && npm run check:style && npm run check:search && npm run check:relief && npm run check:stacking && npm run export:style && vite build",
     "preview": "vite preview",
     "check:style": "node scripts/check-style.mjs",
     "check:search": "node scripts/check-search.mjs",
     "check:relief": "node scripts/check-relief.mjs",
+    "check:stacking": "node scripts/check-stacking.mjs",
     "export:style": "node scripts/export-style.mjs"
   },
   "dependencies": {
