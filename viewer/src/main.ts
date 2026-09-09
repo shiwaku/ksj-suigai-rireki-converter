@@ -47,12 +47,16 @@ import {
 } from './events'
 import {
   DEFAULT_RELIEF_OPACITY,
+  DEFAULT_RELIEF_RANGE,
   RELIEF_ID,
-  RELIEF_LEGEND,
+  RELIEF_RANGES,
   RELIEF_SOURCE,
   registerReliefProtocol,
   reliefLayer,
+  reliefLegend,
+  reliefRangeByKey,
   reliefSourceSpec,
+  type ReliefRange,
 } from './relief'
 import { createEventPicker, type EventPicker } from './eventPicker'
 import { applyThemeAttr, initialTheme, type Theme } from './theme'
@@ -70,6 +74,7 @@ const filter: FilterState = { ...DEFAULT_FILTER }
 
 let reliefOn = false
 let reliefOpacity = DEFAULT_RELIEF_OPACITY
+let reliefRange: ReliefRange = DEFAULT_RELIEF_RANGE
 let hillshadeOn = true
 let hillshadeMethod: HillshadeMethod = 'igor'
 let hillshadeExag = HILLSHADE_PRESETS.igor.exaggeration
@@ -295,7 +300,7 @@ function applyRelief(): void {
       removeSource(RELIEF_SOURCE)
       return
     }
-    if (!map.getSource(RELIEF_SOURCE)) map.addSource(RELIEF_SOURCE, reliefSourceSpec())
+    if (!map.getSource(RELIEF_SOURCE)) map.addSource(RELIEF_SOURCE, reliefSourceSpec(reliefRange))
     map.addLayer(reliefLayer(reliefOpacity), beforeIdFor('relief'))
   })
 }
@@ -606,10 +611,28 @@ const reliefOptsEl = el('relief-opts')
 const reliefOpacityEl = el<HTMLInputElement>('relief-opacity')
 const reliefOpacityValEl = el('relief-opacity-val')
 const reliefLegendEl = el('relief-legend')
+const reliefRangeEl = el<HTMLSelectElement>('relief-range')
 
 reliefOnEl.addEventListener('change', () => {
   reliefOn = reliefOnEl.checked
   reliefOptsEl.hidden = !reliefOn
+  applyRelief()
+})
+
+for (const r of RELIEF_RANGES) {
+  const opt = document.createElement('option')
+  opt.value = r.key
+  opt.textContent = r.label
+  reliefRangeEl.append(opt)
+}
+reliefRangeEl.value = reliefRange.key
+reliefRangeEl.addEventListener('change', () => {
+  reliefRange = reliefRangeByKey(reliefRangeEl.value)
+  buildReliefLegend()
+  // レンジはタイルURLに入っている。ソースを差し替えないと、MapLibre が
+  // URL単位で持っている古い色のタイルがそのまま残る。
+  removeLayer(RELIEF_ID)
+  removeSource(RELIEF_SOURCE)
   applyRelief()
 })
 
@@ -622,32 +645,43 @@ reliefOpacityEl.addEventListener('input', () => {
 })
 
 /**
- * 標高の凡例。帯は等幅で並べる。実際の標高間隔は 1m〜1000m と幅が違い、
- * 値に比例した幅にすると浸水実績で見たい低標高側（0〜140m）が
- * 全体の数%に潰れて読めなくなる。目盛りの数字で実際の境界を示す。
+ * 標高の凡例。帯は等幅で並べる。
+ *
+ * 「全国」レンジでは実際の標高間隔が 1m〜1000m と幅が違い、値に比例した幅に
+ * すると浸水実績で見たい低標高側（0〜140m）が全体の数%に潰れて読めなくなる。
+ * 指定レンジでは16色を等間隔に割っているので、等幅がそのまま実際の間隔になる。
+ * どちらでも実際の境界は目盛りの数字が示す。
  */
 function buildReliefLegend(): void {
+  const legend = reliefLegend(reliefRange)
+  const fmt = (v: number): string => v.toFixed(reliefRange.decimals)
+
   const bar = document.createElement('div')
   bar.className = 'rl-bar'
-  for (const { from, color } of RELIEF_LEGEND) {
+  for (const { from, color } of legend) {
     const cell = document.createElement('span')
     cell.className = 'rl-cell'
     cell.style.background = color
-    cell.title = `${from}m 以上`
+    cell.title = `${fmt(from)}m 以上`
     bar.append(cell)
   }
+
   const ticks = document.createElement('div')
   ticks.className = 'rl-ticks'
   // 帯は16段。2段ごとに下限標高を出す（全段に出すと数字が重なる）。
-  RELIEF_LEGEND.forEach(({ from }, i) => {
+  legend.forEach(({ from }, i) => {
     const t = document.createElement('span')
     t.className = 'rl-tick'
-    t.textContent = i % 2 === 1 ? String(from) : ''
+    t.textContent = i % 2 === 1 ? fmt(from) : ''
     ticks.append(t)
   })
+
   const unit = document.createElement('div')
   unit.className = 'rl-unit'
-  unit.textContent = '標高（m）'
+  unit.textContent =
+    reliefRange.mode === 'abs'
+      ? '標高（m）・段の幅は実際の標高間隔と異なる'
+      : `標高（m）・1段 ${((reliefRange.max - reliefRange.min) / (legend.length - 1)).toFixed(2)}m`
   reliefLegendEl.replaceChildren(bar, ticks, unit)
 }
 
