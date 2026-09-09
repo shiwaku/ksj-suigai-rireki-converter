@@ -25,7 +25,6 @@ import {
   CONTOUR_SOURCE,
   CONTOUR_TEXT_ID,
   DEM_HILLSHADE,
-  DEM_MODES,
   DEM_TERRAIN,
   HILLSHADE_ID,
   HILLSHADE_METHODS,
@@ -66,7 +65,19 @@ let hillshadeExag = HILLSHADE_PRESETS.igor.exaggeration
 let terrainOn = false
 let terrainExag = 1
 let contoursOn = false
-let demMode: DemMode = 'tilejson'
+
+/**
+ * DEM タイルの配信方式。
+ *
+ * 画面から選ばせていたが、浸水履歴を読むうえで配信方式の違いに意味はなく
+ * （見た目は同じで、PMTiles 方式は 705GB のアーカイブへの範囲読みで遅い）、
+ * 操作を迷わせるだけだった。既定の TileJSON に固定し、切り分けが必要なときだけ
+ * `?dem=zxy` / `?dem=pmtiles` で差し替える。
+ */
+const demMode: DemMode = ((): DemMode => {
+  const q = new URLSearchParams(location.search).get('dem')
+  return q === 'zxy' || q === 'pmtiles' || q === 'tilejson' ? q : 'tilejson'
+})()
 
 let index: EventIndex | null = null
 
@@ -99,13 +110,18 @@ const map = new maplibregl.Map({
   zoom: 7,
   minZoom: 4,
   maxZoom: 18,
-  maxPitch: 85,
+  // 3D地形を有効にすると、視線を倒すほど地平線の先まで表示範囲に入り、
+  // 要求されるタイルが一気に増える。浸水域のタイルは広域で 1 枚 500KB 近くあり、
+  // 85 度まで倒せると数百枚に膨らんで描画が止まる。起伏が読めれば十分なので抑える。
+  maxPitch: 70,
   // 地図位置を URL の #ズーム/緯度/経度 に反映（共有・リロード時の位置維持）
   hash: true,
   attributionControl: false,
-  // モバイルはGPU/メモリが限られるため保持タイル数と描画解像度を絞る。
-  // 逼迫すると WebGL コンテキストが失われ地図がまるごと消えるため、その圧を下げる。
-  maxTileCacheSize: isMobile ? 24 : undefined,
+  // 保持タイル数を明示的に抑える。既定（512枚）だと、3D地形で視線を倒したときに
+  // 500KB 級の浸水域タイルを大量に抱えてメモリを使い切り、GC で描画が止まる。
+  // モバイルは GPU/メモリがさらに限られるため強めに絞る。逼迫すると WebGL
+  // コンテキストが失われ地図がまるごと消えるため、その圧も下げる。
+  maxTileCacheSize: isMobile ? 24 : 96,
   pixelRatio: isMobile ? Math.min(window.devicePixelRatio || 1, 2) : undefined,
 })
 
@@ -140,20 +156,44 @@ function diag(msg: string): void {
   renderHud()
 }
 
+/**
+ * HUD に出す「画面中央付近に描かれている浸水域の件数」。
+ *
+ * 引数なしの queryRenderedFeatures は表示範囲の全地物を返す。広域では
+ * 数千件の大きなポリゴンが対象になり、1回で数百ミリ秒かかる。以前これを
+ * render ごとに呼んでいたため、?debug を付けると地図が固まっていた。
+ * 「描画されているか」を見るのが目的なので、中央の小さな箱だけを見る。
+ */
+const CENTER_PROBE_PX = 80
+
+function centerFeatureCount(): number {
+  if (!map.getLayer(FILL_ID)) return -1
+  const { width, height } = map.getCanvas()
+  const cx = width / (window.devicePixelRatio || 1) / 2
+  const cy = height / (window.devicePixelRatio || 1) / 2
+  const h = CENTER_PROBE_PX / 2
+  try {
+    return map.queryRenderedFeatures(
+      [
+        [cx - h, cy - h],
+        [cx + h, cy + h],
+      ],
+      { layers: [FILL_ID] },
+    ).length
+  } catch {
+    return -2
+  }
+}
+
 function renderHud(): void {
   if (!DEBUG || !hudEl) return
-  let rendered = -1
-  try {
-    if (map.getLayer(FILL_ID)) rendered = map.queryRenderedFeatures({ layers: [FILL_ID] }).length
-  } catch {
-    rendered = -2
-  }
+  const rendered = centerFeatureCount()
   hudEl.innerHTML =
     `<b>build ${__BUILD_TIME__}</b><br>` +
     `zoom ${map.getZoom().toFixed(1)} · pitch ${map.getPitch().toFixed(0)} · base ${base}<br>` +
     `dem ${demMode} · hillshade ${hillshadeOn} · terrain ${terrainOn} · contours ${contoursOn}<br>` +
     `mobile ${isMobile} · ctxLost ${ctxLostCount}<br>` +
-    `rendered sinsui features: ${rendered}<br>` +
+    `中央${CENTER_PROBE_PX}pxの浸水域: ${rendered}<br>` +
     `<u>log</u><br>${diagLog.join('<br>')}`
 }
 
@@ -163,9 +203,9 @@ function initHud(): void {
   hudEl.id = 'diag-hud'
   document.body.append(hudEl)
   renderHud()
-  map.on('render', () => {
-    if (map.areTilesLoaded()) renderHud()
-  })
+  // render ごとではなく idle で更新する。地物の数え上げは安くないため、
+  // 描画のたびに走らせると診断が原因で地図が重くなる。
+  map.on('idle', renderHud)
 }
 
 // ---- レイヤーの投入 ----
@@ -201,72 +241,133 @@ function removeSource(id: string): void {
 }
 
 /**
- * 現在の状態からレイヤーを組み直す。
+ * スタイルが読み込み中なら、落ち着いてから実行する。
  *
- * 積み順（下から）: 背景地図 → 陰影起伏 → 浸水域（塗り・輪郭）→ 等高線 → 背景地図のラベル。
- * 等高線を浸水域の上に置くのは、浸水域を透かして地形の高低を追えるようにするため。
+ * `isStyleLoaded()` が false のときに黙って何もしないと、押したトグルが
+ * 反映されないまま終わる（背景やテーマを切り替えた直後がこれに当たる）。
+ * 状態は先に更新されているので、idle で同じ関数を呼べば追いつく。
  */
-function applyLayers(): void {
-  if (!map.isStyleLoaded()) return
-  const before = labelBeforeId()
+function whenStyleReady(fn: () => void): void {
+  if (map.isStyleLoaded()) fn()
+  else map.once('idle', fn)
+}
 
-  // 一度すべて外してから積み直す。個別に差分を当てるより、
-  // 積み順と有無の組み合わせを取り違える余地が少ない。
-  for (const id of [CONTOUR_TEXT_ID, CONTOUR_LINE_ID, OUTLINE_ID, FILL_ID, HILLSHADE_ID]) {
-    removeLayer(id)
-  }
+/**
+ * 自前レイヤーの積み順（下から）:
+ *   背景地図 → 陰影起伏 → 浸水域（塗り・輪郭）→ 等高線 → 背景地図のラベル
+ *
+ * 等高線を浸水域の上に置くのは、浸水域を透かして地形の高低を追えるようにするため。
+ *
+ * 各グループは「自分より上にあるグループの先頭」の手前に差し込む。こうすると
+ * 陰影起伏や等高線を切り替えても浸水域のレイヤーに触らずに済む。以前は毎回
+ * 全部外して積み直していたため、地形のトグルを押すたびに 14,585 件の
+ * 浸水域が再構築され、そのあいだ画面が止まっていた。
+ */
+function beforeIdFor(group: 'hillshade' | 'sinsui' | 'contour'): string | undefined {
+  const labels = labelBeforeId()
+  const contour = map.getLayer(CONTOUR_LINE_ID) ? CONTOUR_LINE_ID : labels
+  if (group === 'contour') return labels
+  if (group === 'sinsui') return contour
+  return map.getLayer(FILL_ID) ? FILL_ID : contour
+}
 
-  if (hillshadeOn) {
+/** 陰影起伏。算出方法ごとに paint プリセットが変わるため、貼り直しで差し替える。 */
+function applyHillshade(): void {
+  whenStyleReady(() => {
+    removeLayer(HILLSHADE_ID)
+    if (!hillshadeOn) {
+      removeSource(DEM_HILLSHADE)
+      return
+    }
     if (!map.getSource(DEM_HILLSHADE)) map.addSource(DEM_HILLSHADE, demSourceSpec(demMode))
-    map.addLayer(hillshadeLayer(hillshadeMethod, hillshadeExag), before)
-  } else {
-    removeSource(DEM_HILLSHADE)
-  }
+    map.addLayer(hillshadeLayer(hillshadeMethod, hillshadeExag), beforeIdFor('hillshade'))
+  })
+}
 
-  if (!map.getSource(SOURCE_ID)) map.addSource(SOURCE_ID, SOURCES[SOURCE_ID])
-  for (const spec of buildLayers({ theme, filter, opacity })) {
-    map.addLayer(
-      {
-        ...spec,
-        layout: { ...(spec as { layout?: object }).layout, visibility: sinsuiOn ? 'visible' : 'none' },
-      } as maplibregl.LayerSpecification,
-      before,
-    )
-  }
+/** 浸水域。色の式はテーマで変わるため、テーマ切替と背景切替のあとだけ貼り直す。 */
+function applySinsuiLayers(): void {
+  whenStyleReady(() => {
+    removeLayer(OUTLINE_ID)
+    removeLayer(FILL_ID)
+    if (!map.getSource(SOURCE_ID)) map.addSource(SOURCE_ID, SOURCES[SOURCE_ID])
+    const before = beforeIdFor('sinsui')
+    for (const spec of buildLayers({ theme, filter, opacity })) {
+      map.addLayer(
+        {
+          ...spec,
+          layout: {
+            ...(spec as { layout?: object }).layout,
+            visibility: sinsuiOn ? 'visible' : 'none',
+          },
+        } as maplibregl.LayerSpecification,
+        before,
+      )
+    }
+  })
+}
 
-  if (contoursOn) {
+function applyContours(): void {
+  whenStyleReady(() => {
+    removeLayer(CONTOUR_TEXT_ID)
+    removeLayer(CONTOUR_LINE_ID)
+    if (!contoursOn) {
+      removeSource(CONTOUR_SOURCE)
+      return
+    }
     if (!map.getSource(CONTOUR_SOURCE)) map.addSource(CONTOUR_SOURCE, contourSourceSpec())
-    for (const spec of contourLayers(theme)) map.addLayer(spec, before)
-  } else {
-    removeSource(CONTOUR_SOURCE)
-  }
-
-  applyTerrain()
+    for (const spec of contourLayers(theme)) map.addLayer(spec, beforeIdFor('contour'))
+  })
 }
 
 /** 3D地形。陰影起伏とは別ソースにするのが MapLibre の推奨。 */
 function applyTerrain(): void {
-  if (!map.isStyleLoaded()) return
-  if (terrainOn) {
-    if (!map.getSource(DEM_TERRAIN)) map.addSource(DEM_TERRAIN, demSourceSpec(demMode))
-    map.setTerrain({ source: DEM_TERRAIN, exaggeration: terrainExag })
-  } else {
-    map.setTerrain(null)
-    // setTerrain(null) の直後はまだソースが参照されているため、次のフレームで外す
-    requestAnimationFrame(() => {
-      if (!terrainOn) removeSource(DEM_TERRAIN)
-    })
-  }
+  whenStyleReady(() => {
+    if (terrainOn) {
+      if (!map.getSource(DEM_TERRAIN)) map.addSource(DEM_TERRAIN, demSourceSpec(demMode))
+      map.setTerrain({ source: DEM_TERRAIN, exaggeration: terrainExag })
+      // 視線を倒すと地平線の先が見える。sky を出さないとそこが背景色のままになる。
+      map.setSky({})
+    } else {
+      map.setTerrain(null)
+      // setTerrain(null) の直後はまだソースが参照されているため、次のフレームで外す
+      requestAnimationFrame(() => {
+        if (!terrainOn) removeSource(DEM_TERRAIN)
+      })
+    }
+  })
 }
 
-/** 浸水域だけの軽い更新（絞り込み・不透明度・表示切替）。 */
-function applySinsui(): void {
+/** 全グループを積み直す。背景スタイルを差し替えたあとに使う。 */
+function applyLayers(): void {
+  applyHillshade()
+  applySinsuiLayers()
+  applyContours()
+  applyTerrain()
+}
+
+// ---- 浸水域の軽い更新 ----
+//
+// 目的ごとに分ける。setFilter はそのレイヤーの読み込み済みタイルを作り直させる
+// ため、14,585 件の浸水域では重い。不透明度スライダーを動かすたびに呼んでいた
+// ため、ドラッグ中に画面が固まっていた。
+
+/** 絞り込み（成因・イベント）。重い操作なので、絞り込みが変わったときだけ呼ぶ。 */
+function applyFilter(): void {
   if (!map.getLayer(FILL_ID)) return
   const f = filterExpr(filter) as never
-  for (const id of [FILL_ID, OUTLINE_ID]) {
-    map.setFilter(id, f)
-    map.setLayoutProperty(id, 'visibility', sinsuiOn ? 'visible' : 'none')
-  }
+  map.setFilter(FILL_ID, f)
+  map.setFilter(OUTLINE_ID, f)
+}
+
+function applyVisibility(): void {
+  if (!map.getLayer(FILL_ID)) return
+  const v = sinsuiOn ? 'visible' : 'none'
+  map.setLayoutProperty(FILL_ID, 'visibility', v)
+  map.setLayoutProperty(OUTLINE_ID, 'visibility', v)
+}
+
+function applyOpacity(): void {
+  if (!map.getLayer(FILL_ID)) return
   map.setPaintProperty(FILL_ID, 'fill-opacity', opacity)
   map.setPaintProperty(OUTLINE_ID, 'line-opacity', Math.min(1, opacity + 0.3))
 }
@@ -310,7 +411,7 @@ const el = <T extends HTMLElement>(id: string): T => document.getElementById(id)
 const sinsuiOnEl = el<HTMLInputElement>('sinsui-on')
 sinsuiOnEl.addEventListener('change', () => {
   sinsuiOn = sinsuiOnEl.checked
-  applySinsui()
+  applyVisibility()
 })
 
 const opacityEl = el<HTMLInputElement>('sinsui-opacity')
@@ -318,7 +419,7 @@ const opacityValEl = el('sinsui-opacity-val')
 opacityEl.addEventListener('input', () => {
   opacity = Number(opacityEl.value)
   opacityValEl.textContent = `${Math.round(opacity * 100)}%`
-  applySinsui()
+  applyOpacity()
 })
 
 // ---- 色分けと凡例 ----
@@ -388,7 +489,7 @@ function buildOriginModes(): void {
         }
         renderLegend()
         // 色の意味は変えず、絞り込みだけを差し替える
-        applySinsui()
+        applyFilter()
       })
       return btn
     }),
@@ -438,7 +539,7 @@ function selectEvent(src: string | null): void {
   writeEventParam(src)
   renderEventNote()
   renderLegend()
-  applySinsui()
+  applyFilter()
 }
 
 function buildEventPicker(idx: EventIndex): void {
@@ -479,7 +580,7 @@ const hillshadeExagValEl = el('hillshade-exag-val')
 hillshadeOnEl.addEventListener('change', () => {
   hillshadeOn = hillshadeOnEl.checked
   hillshadeOptsEl.hidden = !hillshadeOn
-  applyLayers()
+  applyHillshade()
 })
 
 for (const { key, label } of HILLSHADE_METHODS) {
@@ -495,7 +596,7 @@ hillshadeMethodEl.addEventListener('change', () => {
   hillshadeExag = HILLSHADE_PRESETS[hillshadeMethod].exaggeration
   hillshadeExagEl.value = String(hillshadeExag)
   hillshadeExagValEl.textContent = hillshadeExag.toFixed(2)
-  applyLayers()
+  applyHillshade()
 })
 
 hillshadeExagEl.addEventListener('input', () => {
@@ -514,42 +615,46 @@ const terrainExagValEl = el('terrain-exag-val')
 terrainOnEl.addEventListener('change', () => {
   terrainOn = terrainOnEl.checked
   terrainOptsEl.hidden = !terrainOn
-  // 真上から見たままでは起伏が分からないため、初回は視点を倒す。
+
+  if (!terrainOn) {
+    // 傾きを戻すのは地形を外したあと。順序を逆にすると、平面へ戻る途中の
+    // フレームでも地形メッシュを描き続けることになる。
+    applyTerrain()
+    if (map.getPitch() > 0) map.easeTo({ pitch: 0, duration: 600 })
+    return
+  }
+
+  // 地形メッシュの生成・DEMタイルの取得・カメラの傾けを同時に走らせると、
+  // その間フレームが落ちて操作が固まったように見える。地形が落ち着いてから傾ける。
   // 自分で戻した角度を勝手に上書きしないよう、水平のときだけ触る。
-  if (terrainOn && map.getPitch() === 0) map.easeTo({ pitch: 55, duration: 600 })
-  if (!terrainOn && map.getPitch() > 0) map.easeTo({ pitch: 0, duration: 600 })
   applyTerrain()
+  if (map.getPitch() === 0) {
+    map.once('idle', () => {
+      if (terrainOn && map.getPitch() === 0) map.easeTo({ pitch: 55, duration: 600 })
+    })
+  }
 })
 
+// setTerrain は地形メッシュを作り直す。スライダーの1目盛りごとに呼ぶと
+// ドラッグ中に描画が追いつかないため、1フレームに1回へ束ねる。
+let terrainExagScheduled = false
 terrainExagEl.addEventListener('input', () => {
   terrainExag = Number(terrainExagEl.value)
   terrainExagValEl.textContent = terrainExag.toFixed(2)
-  if (terrainOn) map.setTerrain({ source: DEM_TERRAIN, exaggeration: terrainExag })
+  if (!terrainOn || terrainExagScheduled) return
+  terrainExagScheduled = true
+  requestAnimationFrame(() => {
+    terrainExagScheduled = false
+    if (terrainOn && map.getSource(DEM_TERRAIN)) {
+      map.setTerrain({ source: DEM_TERRAIN, exaggeration: terrainExag })
+    }
+  })
 })
 
 const contoursOnEl = el<HTMLInputElement>('contours-on')
 contoursOnEl.addEventListener('change', () => {
   contoursOn = contoursOnEl.checked
-  applyLayers()
-})
-
-const demModeEl = el<HTMLSelectElement>('dem-mode')
-for (const { key, label } of DEM_MODES) {
-  const opt = document.createElement('option')
-  opt.value = key
-  opt.textContent = label
-  demModeEl.append(opt)
-}
-demModeEl.value = demMode
-demModeEl.addEventListener('change', () => {
-  demMode = demModeEl.value as DemMode
-  // ソース定義そのものが変わるので、いったん外してから積み直す
-  map.setTerrain(null)
-  removeLayer(HILLSHADE_ID)
-  removeSource(DEM_HILLSHADE)
-  removeSource(DEM_TERRAIN)
-  applyLayers()
-  diag(`DEM 配信方式を ${demMode} に切替`)
+  applyContours()
 })
 
 // ---- 背景地図スイッチャー（右下） ----
@@ -595,11 +700,34 @@ function setBase(next: Basemap): void {
 const queryLayers = (): string[] =>
   sinsuiOn && map.getLayer(FILL_ID) ? [FILL_ID] : []
 
+/**
+ * ホバーでカーソルを変える（マウス環境のみ）。
+ *
+ * mousemove は1秒に何十回も飛ぶ。浸水域は頂点数の多い大きなポリゴンが
+ * 何重にも重なっているため、そのたびに地物取得を走らせると地図の描画が
+ * 追いつかず、マウスを動かしているあいだ固まったように見える。
+ * 1フレームに1回へ束ね、カメラが動いているあいだは見送る
+ * （ドラッグ・ズーム中にカーソル形状を知る意味はない）。
+ */
 if (window.matchMedia('(hover: hover)').matches) {
-  map.on('mousemove', (ev) => {
+  let pending: maplibregl.Point | null = null
+  let scheduled = false
+
+  const check = (): void => {
+    scheduled = false
+    const point = pending
+    pending = null
+    if (!point || map.isMoving() || map.isZooming() || map.isRotating()) return
     const ids = queryLayers()
-    const hit = ids.length > 0 && map.queryRenderedFeatures(ev.point, { layers: ids }).length > 0
+    const hit = ids.length > 0 && map.queryRenderedFeatures(point, { layers: ids }).length > 0
     map.getCanvas().style.cursor = hit ? 'pointer' : ''
+  }
+
+  map.on('mousemove', (ev) => {
+    pending = ev.point
+    if (scheduled) return
+    scheduled = true
+    requestAnimationFrame(check)
   })
 }
 
@@ -707,8 +835,7 @@ canvas.addEventListener(
   'webglcontextrestored',
   () => {
     diag('WebGL context restored → relayering')
-    if (map.isStyleLoaded()) applyLayers()
-    else map.once('idle', applyLayers)
+    applyLayers()
   },
   false,
 )

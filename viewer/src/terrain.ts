@@ -86,6 +86,11 @@ export const DEM_TERRAIN = 'dem-terrain'
 export const CONTOUR_SOURCE = 'contours'
 
 export const HILLSHADE_ID = 'hillshade'
+/** 等高線を描き始めるズーム。 */
+export const CONTOUR_MINZOOM = 10
+/** 標高の数字を描き始めるズーム。 */
+export const CONTOUR_TEXT_MINZOOM = 12
+
 export const CONTOUR_LINE_ID = 'contour-lines'
 export const CONTOUR_TEXT_ID = 'contour-text'
 
@@ -125,9 +130,9 @@ export function registerTerrainProtocols(maplibre: MaplibreLike): void {
   demSource = new mlcontour.DemSource({
     url: ZXY_TEMPLATE,
     encoding: 'terrarium',
-    // 上流サンプルは 12。浸水域が広がるのは平野で起伏が小さいため、
-    // より細かい等高線を出せるよう1段深い DEM から生成する。
-    maxzoom: 13,
+    // 上流サンプルと同じ 12。ここを深くすると等高線をより細かく刻めるが、
+    // 生成するセグメント数が跳ね上がり、3D地形と併用したときに描画が追いつかない。
+    maxzoom: 12,
     worker: true,
   })
   demSource.setupMaplibre(maplibre as never)
@@ -167,13 +172,16 @@ export function contourSourceSpec(): VectorSourceSpecification {
     type: 'vector',
     tiles: [
       demSource.contourProtocolUrl({
-        // [補助間隔, 主曲線間隔]（m）。低平地の氾濫域を読むため上流サンプルより細かい。
+        // [補助間隔, 主曲線間隔]（m）。
+        //
+        // 当初は低平地の氾濫域を読むため z15 で 10m / 50m まで刻んでいたが、
+        // 起伏の小さい平野では 10m 刻みが延々と蛇行する線になり、1タイルあたりの
+        // セグメント数が跳ね上がる。3D地形と併用すると描画が追いつかなくなるため、
+        // 上流サンプルの範囲に戻し、最深部だけ 1 段細かくする。
         thresholds: {
-          10: [200, 1000],
-          12: [100, 500],
-          13: [50, 250],
+          11: [200, 1000],
+          13: [100, 500],
           14: [20, 100],
-          15: [10, 50],
         },
         elevationKey: 'ele',
         levelKey: 'level',
@@ -182,7 +190,8 @@ export function contourSourceSpec(): VectorSourceSpecification {
         overzoom: 2,
       }),
     ],
-    maxzoom: 15,
+    // DemSource の maxzoom(12) + overzoom(2)。これより深いズームは overzoom で見る。
+    maxzoom: 14,
     attribution: MAPTERHORN_ATTRIBUTION,
   }
 }
@@ -214,6 +223,8 @@ export function contourLayers(theme: 'light' | 'dark'): LayerSpecification[] {
       type: 'line',
       source: CONTOUR_SOURCE,
       'source-layer': 'contours',
+      // 広域では線が詰まって地形が読めないうえ、生成コストだけがかかる
+      minzoom: CONTOUR_MINZOOM,
       paint: {
         'line-color': line,
         'line-width': ['match', ['get', 'level'], 1, 1, 0.5] as never,
@@ -225,6 +236,8 @@ export function contourLayers(theme: 'light' | 'dark'): LayerSpecification[] {
       type: 'symbol',
       source: CONTOUR_SOURCE,
       'source-layer': 'contours',
+      // 標高の数字は文字配置の計算が要る。読める大きさになるズームまで出さない。
+      minzoom: CONTOUR_TEXT_MINZOOM,
       // 主曲線だけに標高を振る。補助曲線にも振ると平野で数字が埋まる。
       filter: ['==', ['get', 'level'], 1] as never,
       layout: {

@@ -143,8 +143,19 @@ export function filterExpr(f: FilterState): unknown {
 export const FILL_ID = 'sinsui_fill'
 export const OUTLINE_ID = 'sinsui_outline'
 
-/** 塗りの既定不透明度。浸水域は年をまたいで重なるため、下が透けるくらいに抑える。 */
-export const DEFAULT_OPACITY = 0.6
+/**
+ * 塗りの既定不透明度。
+ *
+ * 浸水域は同じ場所で重なる（実測で中央値2枚・最大6枚）。同一レイヤー内の
+ * 重なりはアルファが積算されるため、合成後の不透明度は 1-(1-a)^n になる。
+ * a=0.6 では2枚重なるだけで 0.84、3枚で 0.94 に達し、そこから 1.0 まで
+ * 上げても見た目が変わらない（スライダーの上半分が死ぬ）。
+ * 積算後にちょうど背景が透ける 0.35 を既定にする。
+ */
+export const DEFAULT_OPACITY = 0.35
+
+/** 輪郭を描き始めるズーム。これ未満は塗りだけ（理由は OUTLINE_ID のレイヤー定義）。 */
+export const OUTLINE_MINZOOM = 9
 
 export interface LayerOptions {
   theme: Theme
@@ -178,12 +189,14 @@ export function buildLayers(o: LayerOptions): LayerSpecification[] {
       type: 'line',
       source: SOURCE_ID,
       'source-layer': SOURCE_LAYER,
-      minzoom: TILE_MINZOOM,
+      // 広域では輪郭は 0.4px の毛のようになり、面を埋めるだけで境界を示さない。
+      // にもかかわらず 14,585 件ぶんの線を組み立てて描くコストはかかるため、
+      // 境界が意味を持つズームから出す（既定表示の z7 では塗りだけになる）。
+      minzoom: OUTLINE_MINZOOM,
       filter: filterExpr(filter) as never,
       paint: {
         'line-color': color as never,
-        // 広域では輪郭が面を埋めてしまうため、ズームに応じて細く始める
-        'line-width': ['interpolate', ['linear'], ['zoom'], 4, 0.4, 10, 0.8, 14, 1.4] as never,
+        'line-width': ['interpolate', ['linear'], ['zoom'], 9, 0.5, 14, 1.4] as never,
         'line-opacity': Math.min(1, o.opacity + 0.3),
       },
     },
