@@ -15,19 +15,26 @@ export interface FloodEvent {
   month: string | null
   /** 元号ラベル（m29 / s56 / h11 / r1 など）。 */
   era: string | null
-  typhoon: boolean
+  /** 元ファイル名の `_t` サフィックス。成因の判定そのものではなく検索の手がかり。 */
+  typhoon_file: boolean
   /** 災害名。元データが NULL のイベントもある。 */
   name: string | null
   count: number
+  /**
+   * 成因ごとの件数。1イベント（1ファイル）に台風と大雨が混在するものがあるため
+   * 個別に持つ。判定規則は build_events.py の `is_typhoon()` と
+   * src/layers.ts の `isTyphoonExpr` が同じものを実装している。
+   */
+  count_typhoon: number
+  count_other: number
   /** [minLon, minLat, maxLon, maxLat] */
   bounds: [number, number, number, number]
 }
 
 export interface EventIndex {
   features: number
-  year_bins: number[]
-  /** 年代凡例の階級ごとの件数。 */
-  bin_counts: number[]
+  count_typhoon: number
+  count_other: number
   bounds: [number, number, number, number]
   events: FloodEvent[]
 }

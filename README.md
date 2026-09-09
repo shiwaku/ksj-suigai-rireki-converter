@@ -55,7 +55,7 @@ PMTiles は GitHub Pages 経由で配信している(Range Request / CORS 対応
 
 <https://shiwaku.github.io/ksj-suigai-rireki-converter/app/>
 
-年代・期間・台風性・イベント単位での絞り込みと、
+成因(台風 / 大雨・その他)での塗り分けとイベント単位の絞り込み、
 [Mapterhorn](https://mapterhorn.com/) の全球地形(陰影起伏 / 3D地形 / 等高線)の
 重ね合わせができる。ソースと開発方法は [`viewer/`](viewer/) を参照。
 

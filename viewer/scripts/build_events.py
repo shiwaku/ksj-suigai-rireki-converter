@@ -18,15 +18,32 @@ import json
 from pathlib import Path
 
 import geopandas as gpd
+import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[2]
 
-# ビューワの年代凡例と同じ区切り。凡例の件数もこの索引から数えるため、
-# ここと src/layers.ts の YEAR_BINS がずれると凡例と地図が食い違う。
-YEAR_BINS = [1950, 1970, 1980, 2000]
+
+def is_typhoon(disast_name: object, typhoon_file: bool) -> bool:
+    """成因が台風性かを判定する。
+
+    災害名 (disastName) に「台風」を含むものを台風性とする。名称が無いレコード
+    (37件) は元ファイル名の `_t` サフィックス (typhoon_file) で補う。
+
+    ファイル名のフラグだけで判定すると 1961_06_s36 のように1ファイルに
+    「大雨」と「台風第6号」が混在するものを取り違える (17件)。名称は
+    レコード単位なのでそこまで分かれる。
+
+    ビューワ側の src/layers.ts の isTyphoonExpr が同じ規則を MapLibre の式で
+    実装している。凡例の件数はこの索引から数えるため、片方だけ変えると
+    地図と凡例が食い違う。
+    """
+    name = "" if disast_name is None or pd.isna(disast_name) else str(disast_name)
+    if name.strip() == "":
+        return typhoon_file
+    return "台風" in name
 
 
-def pick_name(names: gpd.pd.Series) -> str | None:
+def pick_name(names: pd.Series) -> str | None:
     """イベント名は disastName の最頻値を採る。
 
     同じ Shapefile 内でも表記揺れ (全角丸括弧と半角、「豪雨」と「大雨」) が
@@ -53,40 +70,43 @@ def main() -> None:
         # JGD2011 と WGS84 の差は数 cm でズーム範囲には影響しない。
         gdf = gdf.to_crs("EPSG:4326")
 
+    gdf["is_typhoon"] = [
+        is_typhoon(n, bool(t))
+        for n, t in zip(gdf["disastName"], gdf["typhoon_file"], strict=True)
+    ]
+
     events = []
     for src, part in gdf.groupby("src_file", sort=True):
         minx, miny, maxx, maxy = part.total_bounds
         year = part["event_year"].dropna()
         month = part["event_month"].dropna()
         era = part["era_label"].dropna()
+        n_typhoon = int(part["is_typhoon"].sum())
         events.append(
             {
                 "src": str(src),
                 "year": int(year.iloc[0]) if not year.empty else None,
                 "month": str(month.iloc[0]) if not month.empty else None,
                 "era": str(era.iloc[0]) if not era.empty else None,
-                "typhoon": bool(part["typhoon_file"].iloc[0]),
+                # ファイル名の `_t` サフィックス。検索の手がかりとして残す。
+                "typhoon_file": bool(part["typhoon_file"].iloc[0]),
                 "name": pick_name(part["disastName"]),
                 "count": int(len(part)),
+                # 成因ごとの件数。1ファイルに両方混在するものがあるため個別に持つ。
+                "count_typhoon": n_typhoon,
+                "count_other": int(len(part)) - n_typhoon,
                 "bounds": [round(v, 6) for v in (minx, miny, maxx, maxy)],
             }
         )
 
     events.sort(key=lambda e: (e["year"] or 0, e["month"] or "", e["src"]))
 
-    # 凡例に出す年代ビンごとの件数。
-    edges = [0, *YEAR_BINS, 9999]
-    bin_counts = []
-    for lo, hi in zip(edges, edges[1:]):
-        n = int(((gdf["event_year"] >= lo) & (gdf["event_year"] < hi)).sum())
-        bin_counts.append(n)
-
     minx, miny, maxx, maxy = gdf.total_bounds
     doc = {
         "generated_by": "viewer/scripts/build_events.py",
         "features": int(len(gdf)),
-        "year_bins": YEAR_BINS,
-        "bin_counts": bin_counts,
+        "count_typhoon": int(gdf["is_typhoon"].sum()),
+        "count_other": int((~gdf["is_typhoon"]).sum()),
         "bounds": [round(v, 6) for v in (minx, miny, maxx, maxy)],
         "events": events,
     }
@@ -96,7 +116,7 @@ def main() -> None:
         json.dumps(doc, ensure_ascii=False, indent=1) + "\n", encoding="utf-8"
     )
     print(f"-> {args.output}  {len(events)}イベント / {len(gdf)}件")
-    print(f"   年代別件数 {bin_counts}")
+    print(f"   台風性 {doc['count_typhoon']:,}件 / 大雨・その他 {doc['count_other']:,}件")
 
 
 if __name__ == "__main__":

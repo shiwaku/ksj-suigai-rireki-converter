@@ -13,8 +13,8 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="水害履歴" />
-  <script type="module" crossorigin src="/ksj-suigai-rireki-converter/app/assets/index-DMmVCHrr.js"></script>
-  <link rel="stylesheet" crossorigin href="/ksj-suigai-rireki-converter/app/assets/index-DZqoSxPM.css">
+  <script type="module" crossorigin src="/ksj-suigai-rireki-converter/app/assets/index-DMLyjXCn.js"></script>
+  <link rel="stylesheet" crossorigin href="/ksj-suigai-rireki-converter/app/assets/index-gjKiNAQS.css">
 </head>
 <body>
   <div id="map"></div>
@@ -50,38 +50,14 @@
         </div>
       </div>
 
-      <!-- ---- 色分けと凡例 ---- -->
+      <!-- ---- 成因（台風 / 大雨）で塗り分け・絞り込み ---- -->
       <div class="field">
         <div class="field-head">
-          <span class="field-label">色分け</span>
+          <span class="field-label">成因</span>
         </div>
-        <div id="color-modes" class="seg" role="group" aria-label="色分けの基準"></div>
+        <div id="origin-modes" class="seg" role="group" aria-label="成因で絞る"></div>
         <ul id="legend" class="legend"></ul>
-      </div>
-
-      <!-- ---- 期間で絞る ---- -->
-      <div class="field">
-        <div class="field-head">
-          <span class="field-label">期間</span>
-          <div class="field-actions">
-            <button id="year-reset" class="mini-btn" type="button">全期間</button>
-          </div>
-        </div>
-        <div id="year-readout" class="readout">1896 – 2019 年</div>
-        <div class="slider-row">
-          <label for="year-from">から</label>
-          <input id="year-from" type="range" min="1896" max="2019" step="1" value="1896" />
-        </div>
-        <div class="slider-row">
-          <label for="year-to">まで</label>
-          <input id="year-to" type="range" min="1896" max="2019" step="1" value="2019" />
-        </div>
-        <label class="toggle">
-          <input id="typhoon-only" type="checkbox" />
-          <span class="switch"></span>
-          <span class="t-label">台風性のみ</span>
-        </label>
-        <p class="note">台風性の判定は元ファイル名の <code>_t</code> による。豪雨と台風の両方を含むイベントもある。</p>
+        <p class="note">災害名に「台風」を含むものを台風性とし、名称が無い37件は元ファイル名の <code>_t</code> で補う。七夕豪雨・東海豪雨のように台風由来の豪雨は台風に入る。</p>
       </div>
 
       <!-- ---- 個別のイベント ---- -->
