@@ -241,13 +241,6 @@ body {
   background: var(--hover);
 }
 
-.readout {
-  margin-bottom: 6px;
-  font-size: 13px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
-
 /* ---- トグル ---- */
 .toggle {
   position: relative;

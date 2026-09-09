@@ -31,43 +31,50 @@ export const SOURCES: Record<string, SourceSpecification> = {
   },
 }
 
-// ---- 年代の配色 ----
+// ---- 成因（台風性 / 大雨・その他） ----
 //
-// 年は順序を持つ量なので、色は「単一色相の明→暗」の順序尺度で表す（虹色は使わない）。
-// 元データは 1896〜2019 年の 60 イベント。連続の内挿ではなく5区分の階級にしたのは、
-// 凡例で年代を読み取れるようにするため。
+// 浸水域は年をまたいで何枚も重なるため、地図に持たせられる区別は多くない。
+// 年代の階級で塗ると、重なった部分が「どの年代でもない濁った色」になって
+// 階級の意味が消えるうえ、単一イベントを選ぶと凡例のほとんどが 0 件で並ぶ。
+// 代わりに、水害の読み方として意味のある「台風性か、大雨・その他か」の2値だけを
+// 色に持たせ、同じセグメントで絞り込みも兼ねる。
 //
-// 階級ごとの色は青ランプから採り、順序尺度の検証（単一色相・明度単調・隣接段の
-// 明度差 >= 0.06・最も背景に近い段が地図面に対して 2:1 以上）を通した組み合わせ。
-// ライトは薄→濃、ダークは背景に沈まないよう濃→薄で、どちらも「新しい年ほど目立つ」。
-// 段を入れ替えるときは配色の検証をやり直すこと。
+// 色は判別が検証済みのカテゴリ配色の1・2枠（青・オレンジ）。全ペアの色覚特性
+// シミュレーション下の分離と、地図面に対するコントラストを満たす。
+// 絞り込みで片方だけを表示しても色の意味は変えない（色は対象に従い、状態に従わない）。
 
-/** 階級の下限（この値以上が次の階級）。build_events.py の YEAR_BINS と対になっている。 */
-export const YEAR_BINS = [1950, 1970, 1980, 2000]
-
-/** 凡例に出す階級ラベル。YEAR_BINS から機械的に作ると「〜1949」が作れないため持つ。 */
-export const YEAR_BIN_LABELS = ['1896–1949', '1950–1969', '1970–1979', '1980–1999', '2000–2019']
-
-const YEAR_COLORS: Record<Theme, string[]> = {
-  light: ['#86b6ef', '#5598e7', '#2a78d6', '#1c5cab', '#0d366b'],
-  dark: ['#184f95', '#256abf', '#3987e5', '#6da7ec', '#cde2fb'],
-}
-
-/** 台風性か否かの2値。カテゴリ配色の1・2枠（青・オレンジ）。 */
-const TYPHOON_COLORS: Record<Theme, { typhoon: string; other: string }> = {
+const ORIGIN_COLORS: Record<Theme, { typhoon: string; other: string }> = {
   light: { typhoon: '#eb6834', other: '#2a78d6' },
   dark: { typhoon: '#d95926', other: '#3987e5' },
 }
 
-/** 色分けなしの単色。年代や成因を問わず「浸水したかどうか」だけを見るとき用。 */
-const PLAIN_COLOR: Record<Theme, string> = { light: '#2a78d6', dark: '#3987e5' }
+export type OriginMode = 'all' | 'typhoon' | 'other'
 
-export type ColorMode = 'year' | 'typhoon' | 'plain'
+export const ORIGIN_MODES: { key: OriginMode; label: string }[] = [
+  { key: 'all', label: 'すべて' },
+  { key: 'typhoon', label: '台風' },
+  { key: 'other', label: '大雨・その他' },
+]
 
-export const COLOR_MODES: { key: ColorMode; label: string }[] = [
-  { key: 'year', label: '年代' },
-  { key: 'typhoon', label: '台風性' },
-  { key: 'plain', label: '単色' },
+/**
+ * 成因が台風性かを判定する式。
+ *
+ * 災害名（`disastName`）に「台風」を含むものを台風性とする。名称が無い 37 件は
+ * 元ファイル名の `_t` サフィックス（`typhoon_file`）で補う。
+ *
+ * ファイル名のフラグだけで判定すると、1ファイルに「大雨」と「台風第6号」が
+ * 混在する 1961_06_s36 を取り違える（17件）。災害名はレコード単位なのでそこまで分かれる。
+ *
+ * `typhoon_file` は真偽値属性だが、MVT では 0/1 で来る実装もあるため to-boolean を通す。
+ * scripts/build_events.py の `is_typhoon()` が同じ規則を実装しており、凡例の件数は
+ * そちらが書き出した索引から数えている。**片方だけ変えると地図と凡例が食い違う。**
+ */
+const isTyphoonExpr = (): unknown => [
+  'case',
+  // 名称が空なら（null も coalesce で空に寄る）ファイル名のフラグで補う
+  ['==', ['coalesce', ['get', 'disastName'], ''], ''],
+  ['to-boolean', ['get', 'typhoon_file']],
+  ['>=', ['index-of', '台風', ['coalesce', ['get', 'disastName'], '']], 0],
 ]
 
 /** 凡例に並べる1項目。 */
@@ -78,86 +85,55 @@ export interface LegendItem {
   count?: number
 }
 
-export function legendFor(mode: ColorMode, theme: Theme, binCounts?: number[]): LegendItem[] {
-  switch (mode) {
-    case 'year':
-      return YEAR_BIN_LABELS.map((label, i) => ({
-        color: YEAR_COLORS[theme][i],
-        label,
-        count: binCounts?.[i],
-      }))
+export interface OriginCounts {
+  typhoon: number
+  other: number
+}
+
+export function legendFor(
+  origin: OriginMode,
+  theme: Theme,
+  counts?: OriginCounts,
+): LegendItem[] {
+  const c = ORIGIN_COLORS[theme]
+  const typhoon: LegendItem = { color: c.typhoon, label: '台風', count: counts?.typhoon }
+  const other: LegendItem = { color: c.other, label: '大雨・その他', count: counts?.other }
+  switch (origin) {
+    case 'all':
+      return [typhoon, other]
     case 'typhoon':
-      return [
-        { color: TYPHOON_COLORS[theme].typhoon, label: '台風性' },
-        { color: TYPHOON_COLORS[theme].other, label: '豪雨・その他' },
-      ]
-    case 'plain':
-      return [{ color: PLAIN_COLOR[theme], label: '浸水実績' }]
+      return [typhoon]
+    case 'other':
+      return [other]
   }
 }
 
-/**
- * 塗り色の式。
- *
- * event_year はファイル名から付けた整数属性。タイル化の過程で欠けても
- * 落ちないよう coalesce で 0 に寄せる（最古の階級に入る）。
- * typhoon_file は真偽値属性だが、MVT では 0/1 で来る実装もあるため to-boolean を通す。
- */
-function colorExpr(mode: ColorMode, theme: Theme): unknown {
-  switch (mode) {
-    case 'year': {
-      const c = YEAR_COLORS[theme]
-      const expr: unknown[] = [
-        'step',
-        ['coalesce', ['to-number', ['get', 'event_year']], 0],
-        c[0],
-      ]
-      YEAR_BINS.forEach((edge, i) => expr.push(edge, c[i + 1]))
-      return expr
-    }
-    case 'typhoon': {
-      const c = TYPHOON_COLORS[theme]
-      return ['case', ['to-boolean', ['get', 'typhoon_file']], c.typhoon, c.other]
-    }
-    case 'plain':
-      return PLAIN_COLOR[theme]
-  }
+/** 塗り色の式。成因の絞り込み状態にかかわらず、色の意味は常に同じ。 */
+const colorExpr = (theme: Theme): unknown => {
+  const c = ORIGIN_COLORS[theme]
+  return ['case', isTyphoonExpr(), c.typhoon, c.other]
 }
 
 // ---- 絞り込み ----
 
 export interface FilterState {
-  /** 表示する年の下限・上限（両端を含む）。 */
-  yearFrom: number
-  yearTo: number
-  /** 台風性のイベントだけに絞る。 */
-  typhoonOnly: boolean
+  /** 成因。'all' なら両方を色で描き分ける。 */
+  origin: OriginMode
   /** 単一イベント（元 Shapefile 名）に絞る。null なら全イベント。 */
   src: string | null
 }
 
-export const YEAR_MIN = 1896
-export const YEAR_MAX = 2019
-
-export const DEFAULT_FILTER: FilterState = {
-  yearFrom: YEAR_MIN,
-  yearTo: YEAR_MAX,
-  typhoonOnly: false,
-  src: null,
-}
+export const DEFAULT_FILTER: FilterState = { origin: 'all', src: null }
 
 /**
- * 絞り込み式。年の範囲は常に効かせ、台風性とイベント指定は指定時だけ加える。
- * 既定値でも `all` を返すのは、レイヤーの filter を付け外しすると
- * スタイル差分の適用で取りこぼしが出るため（常に同じ形にしておく）。
+ * 絞り込み式。既定（絞り込みなし）でも `all` を返すのは、レイヤーの filter を
+ * 付け外しするとスタイル差分の適用で取りこぼしが出るため（常に同じ形にしておく）。
+ * 引数ゼロの `["all"]` は真。
  */
 export function filterExpr(f: FilterState): unknown {
-  const year = ['coalesce', ['to-number', ['get', 'event_year']], 0]
-  const parts: unknown[] = [
-    ['>=', year, f.yearFrom],
-    ['<=', year, f.yearTo],
-  ]
-  if (f.typhoonOnly) parts.push(['to-boolean', ['get', 'typhoon_file']])
+  const parts: unknown[] = []
+  if (f.origin === 'typhoon') parts.push(isTyphoonExpr())
+  if (f.origin === 'other') parts.push(['!', isTyphoonExpr()])
   if (f.src) parts.push(['==', ['get', 'src_file'], f.src])
   return ['all', ...parts]
 }
@@ -171,7 +147,6 @@ export const OUTLINE_ID = 'sinsui_outline'
 export const DEFAULT_OPACITY = 0.6
 
 export interface LayerOptions {
-  mode: ColorMode
   theme: Theme
   filter: FilterState
   opacity: number
@@ -182,7 +157,7 @@ export interface LayerOptions {
  * 輪郭を塗りと同色の不透明で描くことで、重なって混色した内側でも境界が読める。
  */
 export function buildLayers(o: LayerOptions): LayerSpecification[] {
-  const color = colorExpr(o.mode, o.theme)
+  const color = colorExpr(o.theme)
   const filter = o.filter
   return [
     {
@@ -222,7 +197,7 @@ export function buildLayers(o: LayerOptions): LayerSpecification[] {
  *
  * ビューワは背景地図・テーマ・絞り込みを実行時に組み替えるためレイヤーを
  * コードで作っているが、そのままでは QGIS や Maputnik に渡せない。
- * 既定の見た目（年代色・絞り込みなし）を静的なスタイルとして書き出せるようにする。
+ * 既定の見た目（成因で塗り分け・絞り込みなし）を静的なスタイルとして書き出せるようにする。
  * 呼び出しは scripts/export-style.mjs から。
  */
 export function buildStyle(theme: Theme = 'light'): StyleSpecification {
@@ -242,12 +217,7 @@ export function buildStyle(theme: Theme = 'light'): StyleSpecification {
         type: 'background',
         paint: { 'background-color': theme === 'dark' ? '#14161a' : '#ffffff' },
       },
-      ...buildLayers({
-        mode: 'year',
-        theme,
-        filter: DEFAULT_FILTER,
-        opacity: DEFAULT_OPACITY,
-      }),
+      ...buildLayers({ theme, filter: DEFAULT_FILTER, opacity: DEFAULT_OPACITY }),
     ],
   }
 }

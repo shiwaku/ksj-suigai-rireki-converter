@@ -4,23 +4,20 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 
 import { BASEMAPS, getBasemapStyle, type Basemap } from './basemap'
 import {
-  COLOR_MODES,
   DEFAULT_FILTER,
   DEFAULT_OPACITY,
   FILL_ID,
+  ORIGIN_MODES,
   OUTLINE_ID,
   POPUP_MAX_ITEMS,
   SOURCES,
   SOURCE_ID,
-  YEAR_BINS,
-  YEAR_MAX,
-  YEAR_MIN,
   buildLayers,
   filterExpr,
   legendFor,
   popupHtml,
-  type ColorMode,
   type FilterState,
+  type OriginCounts,
   type PopupItem,
 } from './layers'
 import {
@@ -60,7 +57,6 @@ let base: Basemap = 'pale'
 applyThemeAttr(theme)
 
 let sinsuiOn = true
-let colorMode: ColorMode = 'year'
 let opacity = DEFAULT_OPACITY
 const filter: FilterState = { ...DEFAULT_FILTER }
 
@@ -228,7 +224,7 @@ function applyLayers(): void {
   }
 
   if (!map.getSource(SOURCE_ID)) map.addSource(SOURCE_ID, SOURCES[SOURCE_ID])
-  for (const spec of buildLayers({ mode: colorMode, theme, filter, opacity })) {
+  for (const spec of buildLayers({ theme, filter, opacity })) {
     map.addLayer(
       {
         ...spec,
@@ -330,48 +326,29 @@ opacityEl.addEventListener('input', () => {
 const legendEl = el<HTMLUListElement>('legend')
 
 /**
- * 凡例の件数は、いま絞り込んでいる範囲の件数を出す。
+ * 凡例と件数バッジに出す、いま絞り込んでいる範囲の件数。
+ *
  * タイルからは見えている範囲しか数えられないため、イベント索引から積算する。
+ * 索引の `count_typhoon` / `count_other` は build_events.py が地図側と同じ規則で
+ * 数えたもの（1ファイルに両方の成因が混在するイベントがあるため個別に持っている）。
  */
-function counts(): { bins: number[]; typhoon: number; other: number; total: number } {
-  const bins = new Array(YEAR_BINS.length + 1).fill(0) as number[]
+function counts(): OriginCounts & { total: number } {
   let typhoon = 0
   let other = 0
-  let total = 0
   for (const e of index?.events ?? []) {
-    if (!matchesFilter(e)) continue
-    total += e.count
-    if (e.typhoon) typhoon += e.count
-    else other += e.count
-    const y = e.year ?? 0
-    let bin = 0
-    while (bin < YEAR_BINS.length && y >= YEAR_BINS[bin]) bin++
-    bins[bin] += e.count
+    if (filter.src && filter.src !== e.src) continue
+    typhoon += e.count_typhoon
+    other += e.count_other
   }
-  return { bins, typhoon, other, total }
-}
-
-function matchesFilter(e: FloodEvent): boolean {
-  const y = e.year ?? 0
-  if (y < filter.yearFrom || y > filter.yearTo) return false
-  if (filter.typhoonOnly && !e.typhoon) return false
-  if (filter.src && filter.src !== e.src) return false
-  return true
+  const shown =
+    filter.origin === 'typhoon' ? typhoon : filter.origin === 'other' ? other : typhoon + other
+  return { typhoon, other, total: shown }
 }
 
 function renderLegend(): void {
-  // 件数はイベント索引から積算する。読み込み前は色だけを出し、
-  // 「0件」と誤読させない。
+  // 読み込み前は色だけを出し、「0件」と誤読させない
   const c = index ? counts() : null
-  const items = legendFor(colorMode, theme, c?.bins)
-  if (c) {
-    if (colorMode === 'typhoon') {
-      items[0].count = c.typhoon
-      items[1].count = c.other
-    } else if (colorMode === 'plain') {
-      items[0].count = c.total
-    }
-  }
+  const items = legendFor(filter.origin, theme, c ?? undefined)
   legendEl.replaceChildren(
     ...items.map((it) => {
       const li = document.createElement('li')
@@ -394,75 +371,29 @@ function renderLegend(): void {
   el('feature-count').textContent = c ? `${c.total.toLocaleString('ja-JP')}件` : '–'
 }
 
-const colorModesEl = el('color-modes')
-function buildColorModes(): void {
-  colorModesEl.replaceChildren(
-    ...COLOR_MODES.map(({ key, label }) => {
+const originModesEl = el('origin-modes')
+function buildOriginModes(): void {
+  originModesEl.replaceChildren(
+    ...ORIGIN_MODES.map(({ key, label }) => {
       const btn = document.createElement('button')
       btn.type = 'button'
       btn.textContent = label
       btn.dataset.mode = key
-      btn.setAttribute('aria-pressed', String(key === colorMode))
+      btn.setAttribute('aria-pressed', String(key === filter.origin))
       btn.addEventListener('click', () => {
-        if (colorMode === key) return
-        colorMode = key
-        for (const b of colorModesEl.querySelectorAll<HTMLButtonElement>('button')) {
-          b.setAttribute('aria-pressed', String(b.dataset.mode === colorMode))
+        if (filter.origin === key) return
+        filter.origin = key
+        for (const b of originModesEl.querySelectorAll<HTMLButtonElement>('button')) {
+          b.setAttribute('aria-pressed', String(b.dataset.mode === filter.origin))
         }
         renderLegend()
-        // 色の式そのものが変わるためレイヤーを組み直す
-        applyLayers()
+        // 色の意味は変えず、絞り込みだけを差し替える
+        applySinsui()
       })
       return btn
     }),
   )
 }
-
-// ---- 期間 ----
-
-const yearFromEl = el<HTMLInputElement>('year-from')
-const yearToEl = el<HTMLInputElement>('year-to')
-const yearReadoutEl = el('year-readout')
-
-function renderYearReadout(): void {
-  yearReadoutEl.textContent = `${filter.yearFrom} – ${filter.yearTo} 年`
-}
-
-function onYearInput(): void {
-  let from = Number(yearFromEl.value)
-  let to = Number(yearToEl.value)
-  // つまみが交差したら、いま動かしたほうを優先して他方を寄せる
-  if (from > to) {
-    if (document.activeElement === yearFromEl) to = from
-    else from = to
-    yearFromEl.value = String(from)
-    yearToEl.value = String(to)
-  }
-  filter.yearFrom = from
-  filter.yearTo = to
-  renderYearReadout()
-  renderLegend()
-  applySinsui()
-}
-yearFromEl.addEventListener('input', onYearInput)
-yearToEl.addEventListener('input', onYearInput)
-
-el<HTMLButtonElement>('year-reset').addEventListener('click', () => {
-  filter.yearFrom = YEAR_MIN
-  filter.yearTo = YEAR_MAX
-  yearFromEl.value = String(YEAR_MIN)
-  yearToEl.value = String(YEAR_MAX)
-  renderYearReadout()
-  renderLegend()
-  applySinsui()
-})
-
-const typhoonOnlyEl = el<HTMLInputElement>('typhoon-only')
-typhoonOnlyEl.addEventListener('change', () => {
-  filter.typhoonOnly = typhoonOnlyEl.checked
-  renderLegend()
-  applySinsui()
-})
 
 // ---- 水害イベント ----
 
@@ -484,10 +415,18 @@ function renderEventNote(): void {
     eventZoomEl.disabled = true
     return
   }
+  // 成因は件数で示す。1イベントに両方が混在するものがあるため「台風性かどうか」の
+  // 二択では表せない（例: 1961年6月は大雨と台風第6号が同じファイルに入っている）。
+  const origin =
+    e.count_other === 0
+      ? '台風'
+      : e.count_typhoon === 0
+        ? '大雨・その他'
+        : `台風${e.count_typhoon.toLocaleString('ja-JP')}件 + 大雨・その他${e.count_other.toLocaleString('ja-JP')}件`
   const parts = [
     `${e.year ?? '????'}年${monthLabel(e.month)}`,
-    e.typhoon ? '台風性' : '豪雨・その他',
-    `${e.count.toLocaleString('ja-JP')}件`,
+    origin,
+    `計${e.count.toLocaleString('ja-JP')}件`,
     e.src,
   ]
   eventNoteEl.textContent = parts.join(' · ')
@@ -704,9 +643,8 @@ const buildEl = document.getElementById('build-ver')
 if (buildEl) buildEl.textContent = `build: ${__BUILD_TIME__}`
 
 renderThemeBtn()
-buildColorModes()
+buildOriginModes()
 renderLegend()
-renderYearReadout()
 renderEventNote()
 opacityValEl.textContent = `${Math.round(opacity * 100)}%`
 hillshadeExagValEl.textContent = hillshadeExag.toFixed(2)

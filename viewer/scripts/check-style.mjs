@@ -4,15 +4,15 @@
 //
 //   npm run check:style
 //
-// ビューワの見た目はテーマ × 色分け × 絞り込み × 地形の組み合わせで変わり、
-// 中身は MapLibre の式（match / step / case / interpolate）で組んである。
+// ビューワの見た目はテーマ × 成因の絞り込み × イベント指定 × 地形の組み合わせで変わり、
+// 中身は MapLibre の式（case / index-of / match / interpolate）で組んである。
 // 式の書き間違いはブラウザで該当の組み合わせを開くまで気付けないため、
 // 組み合わせを総当たりで仕様検証に通す。タイルの取得は行わない。
 // -----------------------------------------
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { validateStyleMin } from '@maplibre/maplibre-gl-style-spec'
+import { expression, validateStyleMin } from '@maplibre/maplibre-gl-style-spec'
 import { createServer } from 'vite'
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
@@ -28,27 +28,28 @@ try {
   const L = await server.ssrLoadModule('/src/layers.ts')
   const T = await server.ssrLoadModule('/src/terrain.ts')
 
+  const EVENT = '2000_09_h12_sinsui_t_add22.shp'
   const filters = [
     { name: '既定', f: L.DEFAULT_FILTER },
-    { name: '年範囲', f: { yearFrom: 1950, yearTo: 1979, typhoonOnly: false, src: null } },
-    { name: '台風性のみ', f: { yearFrom: 1896, yearTo: 2019, typhoonOnly: true, src: null } },
-    { name: 'イベント指定', f: { yearFrom: 1896, yearTo: 2019, typhoonOnly: true, src: '1959_09_s34_sinsui_t.shp' } },
+    { name: '台風のみ', f: { origin: 'typhoon', src: null } },
+    { name: '大雨のみ', f: { origin: 'other', src: null } },
+    { name: 'イベント指定', f: { origin: 'all', src: EVENT } },
+    { name: 'イベント×台風', f: { origin: 'typhoon', src: EVENT } },
+    { name: 'イベント×大雨', f: { origin: 'other', src: EVENT } },
   ]
 
   for (const theme of ['light', 'dark']) {
-    for (const mode of ['year', 'typhoon', 'plain']) {
-      for (const { name, f } of filters) {
-        const style = {
-          version: 8,
-          glyphs: 'https://gsi-cyberjapan.github.io/optimal_bvmap/glyphs/{fontstack}/{range}.pbf',
-          sources: { ...L.SOURCES },
-          layers: L.buildLayers({ mode, theme, filter: f, opacity: 0.6 }),
-        }
-        const errs = validateStyleMin(style)
-        const tag = `${theme}/${mode}/${name}`
-        if (errs.length) { bad++; console.error(`FAIL ${tag}`); errs.forEach(e => console.error('   ', e.message)) }
-        else console.log(`ok   ${tag}`)
+    for (const { name, f } of filters) {
+      const style = {
+        version: 8,
+        glyphs: 'https://gsi-cyberjapan.github.io/optimal_bvmap/glyphs/{fontstack}/{range}.pbf',
+        sources: { ...L.SOURCES },
+        layers: L.buildLayers({ theme, filter: f, opacity: 0.6 }),
       }
+      const errs = validateStyleMin(style)
+      const tag = `${theme}/${name}`
+      if (errs.length) { bad++; console.error(`FAIL ${tag}`); errs.forEach(e => console.error('   ', e.message)) }
+      else console.log(`ok   ${tag}`)
     }
   }
 
@@ -64,6 +65,56 @@ try {
       const tag = `hillshade ${key}/${dem}`
       if (errs.length) { bad++; console.error(`FAIL ${tag}`); errs.forEach(e => console.error('   ', e.message)) }
       else console.log(`ok   ${tag}`)
+    }
+  }
+
+  // ---- 成因の判定を実際に評価する ----
+  //
+  // 「台風性か」の判定は build_events.py の is_typhoon()（凡例の件数）と
+  // src/layers.ts の isTyphoonExpr（地図の色と絞り込み）に二重で実装されている。
+  // 片方だけ変えると地図と凡例が食い違うため、式を本当に評価して規則を固定する。
+  // 判定は filterExpr の 'typhoon' / 'other' が排他かつ網羅であることで確かめる。
+  const ORIGIN_CASES = [
+    ['1959(昭和34)年9月降雨(伊勢湾台風)', true, 'typhoon'],
+    ['2000（平成12）年 9月 台風14号・東海豪雨', true, 'typhoon'],
+    ['1974(昭和49)年7月降雨(台風8号・七夕豪雨)', true, 'typhoon'],
+    // ファイル名フラグと食い違う実データ（1961_06_s36 に混在する17件）
+    ['1961（昭和36）年6月台風第6号', false, 'typhoon'],
+    ['1961(昭和36)年6月大雨', false, 'other'],
+    ['1935(昭和10)年6月降雨(鴨川大洪水)', false, 'other'],
+    ['1995(平成7)年7月降雨(豪雨)', false, 'other'],
+    // 災害名が無い37件はファイル名の `_t` で補う
+    [null, true, 'typhoon'],
+    [null, false, 'other'],
+    ['', true, 'typhoon'],
+    ['', false, 'other'],
+  ]
+
+  const compile = (expr) => {
+    const c = expression.createExpression(expr, { type: 'boolean' })
+    if (c.result === 'error') {
+      throw new Error(`式が不正: ${c.value.map((e) => e.message).join(' / ')}`)
+    }
+    return (props) => c.value.evaluate({ zoom: 10 }, { properties: props })
+  }
+
+  const isTyphoonOnly = compile(L.filterExpr({ origin: 'typhoon', src: null }))
+  const isOtherOnly = compile(L.filterExpr({ origin: 'other', src: null }))
+
+  for (const [disastName, typhoonFile, expected] of ORIGIN_CASES) {
+    // MVT は欠けた属性を持たないため、null は「キーが無い」で表す
+    const props = { typhoon_file: typhoonFile }
+    if (disastName !== null) props.disastName = disastName
+
+    const t = isTyphoonOnly(props)
+    const o = isOtherOnly(props)
+    const got = t && !o ? 'typhoon' : o && !t ? 'other' : `不定(台風=${t} 大雨=${o})`
+    const shown = disastName === null ? '(名称なし)' : disastName === '' ? '(空文字)' : disastName
+    const tag = `成因 _t=${String(typhoonFile).padEnd(5)} ${shown}`
+    if (got === expected) console.log(`ok   ${tag} -> ${got}`)
+    else {
+      bad++
+      console.error(`FAIL ${tag} -> ${got}（期待 ${expected}）`)
     }
   }
 
