@@ -14,10 +14,38 @@
 | 色分け | **年代**（5階級）/ **台風性**（台風・豪雨その他）/ **単色**。凡例に該当件数を表示 |
 | 期間で絞る | 年の下限・上限スライダー。凡例と件数バッジが連動する |
 | 台風性で絞る | 元ファイル名の `_t` サフィックスによる |
-| イベント単位 | 60 イベントの一覧から1件に絞り、その範囲へ移動 |
+| イベント単位 | 60 イベントを**検索して**1件に絞り、その範囲へ移動。選択は URL に載る |
 | 地形（Mapterhorn） | 陰影起伏（5方式・強調可変）/ 3D地形（起伏倍率可変）/ 等高線。DEM の配信方式は TileJSON・ZXY・PMTiles から選択 |
 | 背景地図 | 淡色 / 標準（地理院 最適化ベクトルタイル）/ 写真（地理院シームレス空中写真）/ 白図 |
 | その他 | ライト/ダークテーマ、クリックで属性ポップアップ（重なった浸水域を全件）、位置を URL ハッシュに保存 |
+
+## 特定の災害だけを見る / 共有する
+
+「水害イベント」の入力欄で災害名・年・元号・ファイル名を検索して1件に絞る。
+全角括弧「（平成12）」と半角括弧「(平成8)」、全角数字が元データで混在しているため、
+検索は NFKC 正規化して照合する。空白区切りは AND。
+
+```
+東海        → 2000（平成12）年 9月 台風14号・東海豪雨
+2000        → 同じ
+平成12 / h12 → 同じ
+伊勢湾      → 1959（昭和34）年9月 伊勢湾台風
+s34         → 1959年8月・9月の2件
+```
+
+選択したイベントは `?event=<元Shapefile名>` として URL に載るので、そのままリンクを渡せる。
+
+```
+# 2000年の東海豪雨だけを表示（範囲へ自動で寄る）
+https://shiwaku.github.io/ksj-suigai-rireki-converter/app/?event=2000_09_h12_sinsui_t_add22.shp
+
+# 位置も指定する（#ズーム/緯度/経度 がある場合はそちらを尊重し、自動ズームしない）
+.../app/?event=2000_09_h12_sinsui_t_add22.shp#11/35.18/136.90
+```
+
+`?event=` に知らない値が来たらクエリごと捨てて全イベント表示に戻る。
+地図位置は MapLibre が URL のハッシュに書くため、`?event=` はクエリ側だけを
+`history.replaceState` で書き換える（絞り込み操作で戻るボタンの行き先を増やさない）。
 
 ## 使い方
 
@@ -25,7 +53,7 @@
 cd viewer
 npm install
 npm run dev      # http://localhost:5175
-npm run build    # 型チェック → スタイル検証 → スタイル書き出し → ../app/ へビルド
+npm run build    # 型チェック → 各種検証 → スタイル書き出し → ../app/ へビルド
 npm run preview  # ビルド結果を確認
 ```
 
@@ -35,8 +63,11 @@ npm run preview  # ビルド結果を確認
 2. `npm run check:style` — テーマ × 色分け × 絞り込み × 地形の全組み合わせ（47通り）を
    MapLibre スタイル仕様に照らして検証する。式（`step` / `case` / `match` / `interpolate`）の
    書き間違いはブラウザで該当の組み合わせを開くまで気付けないため、総当たりで通す
-3. `npm run export:style` — `public/style/sinsui-{light,dark}.json` を書き出す
-4. `vite build` — `../app/` へ出力
+3. `npm run check:search` — イベント検索の絞り込みを `public/events.json` の実データで検証する。
+   括弧や数字の全角半角の正規化を間違えると「東海」や「2000」で目的の災害に当たらなくなるが、
+   ブラウザで打ってみるまで気付けないため、代表的なクエリの期待結果を照合する
+4. `npm run export:style` — `public/style/sinsui-{light,dark}.json` を書き出す
+5. `vite build` — `../app/` へ出力
 
 ### 配信先の差し替え
 
@@ -65,11 +96,13 @@ viewer/
     layers.ts           浸水実績のソース・レイヤー・配色・絞り込み・ポップアップ
     terrain.ts          Mapterhorn の DEM（陰影起伏 / 3D地形 / 等高線）
     basemap.ts          背景地図の切替とダーク化
-    events.ts           イベント索引（events.json）の読み込み
+    events.ts           イベント索引（events.json）の読み込みと ?event= の読み書き
+    eventPicker.ts      イベントの検索付き選択（コンボボックス）
     theme.ts            ライト/ダークの保存と反映
     style.css           デザイントークンとパネル
   scripts/
     check-style.mjs     全組み合わせのスタイル検証
+    check-search.mjs    イベント検索の絞り込み検証
     export-style.mjs    静的スタイルの書き出し（QGIS / Maputnik 用）
     build_events.py     events.json の生成（geopandas）
   public/
