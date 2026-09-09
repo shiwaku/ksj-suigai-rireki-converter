@@ -56,8 +56,9 @@ PMTiles は GitHub Pages 経由で配信している(Range Request / CORS 対応
 <https://shiwaku.github.io/ksj-suigai-rireki-converter/app/>
 
 成因(台風 / 大雨・その他)での塗り分けとイベント単位の絞り込み、
-[Mapterhorn](https://mapterhorn.com/) の全球地形(陰影起伏 / 3D地形 / 等高線)の
-重ね合わせができる。ソースと開発方法は [`viewer/`](viewer/) を参照。
+[Mapterhorn](https://mapterhorn.com/) の全球地形(段彩 / 陰影起伏 / 3D地形 / 等高線)の
+重ね合わせができる。段彩と陰影起伏を重ねると陰影段彩図になり、
+浸水域が地形のどこに乗っているかを読める。ソースと開発方法は [`viewer/`](viewer/) を参照。
 
 特定の災害だけを見せるリンクも作れる(`?event=<元Shapefile名>`):
 
