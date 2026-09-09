@@ -241,12 +241,26 @@ const OWN_LAYER_IDS = new Set([
 ])
 
 /**
- * 背景地図の最初のラベル（symbol）レイヤーのID。
- * 自前のレイヤーはこの手前に差し込み、地名・注記が浸水域や陰影の下に隠れないようにする。
- * 写真・白図の背景にはラベルが無いため undefined（最前面に積む）。
+ * 背景地図の注記（地名・河川名など）の先頭レイヤーのID。
+ * 自前のレイヤーはこの手前に差し込み、注記だけを上に残す。
+ * 写真・白図の背景には注記が無いため undefined（最前面に積む）。
+ *
+ * 以前は「最初の symbol レイヤー」を注記とみなしていたが、地理院 最適化ベクトルタイルの
+ * 最初の symbol は水部の小さな注記（`水部表記線point`、123レイヤー中の13番目）で、
+ * 実際の注記は末尾の 114〜122 番。そのため自前のレイヤーが**背景地図の101レイヤーの下**
+ * に埋まり、市街地では建築物の不透明な塗り（36〜108番）に段彩も浸水域も潰されていた。
+ *
+ * 注記は `source-layer` が `Anno` のレイヤー群で、それ以降に他のレイヤーは無い。
+ * これを目印にする（他のスタイルでは従来どおり最初の symbol に落とす）。
  */
+const ANNO_SOURCE_LAYER = 'Anno'
+
 function labelBeforeId(): string | undefined {
   const layers = map.getStyle()?.layers ?? []
+  const anno = layers.find(
+    (l) => (l as { 'source-layer'?: string })['source-layer'] === ANNO_SOURCE_LAYER,
+  )
+  if (anno) return anno.id
   return layers.find((l) => l.type === 'symbol' && !OWN_LAYER_IDS.has(l.id))?.id
 }
 
