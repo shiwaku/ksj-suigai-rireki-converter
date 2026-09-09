@@ -7,9 +7,10 @@
   "license": "Apache-2.0",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && npm run check:style && npm run export:style && vite build",
+    "build": "tsc --noEmit && npm run check:style && npm run check:search && npm run export:style && vite build",
     "preview": "vite preview",
     "check:style": "node scripts/check-style.mjs",
+    "check:search": "node scripts/check-search.mjs",
     "export:style": "node scripts/export-style.mjs"
   },
   "dependencies": {

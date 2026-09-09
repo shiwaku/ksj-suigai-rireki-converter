@@ -59,6 +59,11 @@ PMTiles は GitHub Pages 経由で配信している(Range Request / CORS 対応
 [Mapterhorn](https://mapterhorn.com/) の全球地形(陰影起伏 / 3D地形 / 等高線)の
 重ね合わせができる。ソースと開発方法は [`viewer/`](viewer/) を参照。
 
+特定の災害だけを見せるリンクも作れる(`?event=<元Shapefile名>`):
+
+- 2000年の東海豪雨: <https://shiwaku.github.io/ksj-suigai-rireki-converter/app/?event=2000_09_h12_sinsui_t_add22.shp>
+- 1959年の伊勢湾台風: <https://shiwaku.github.io/ksj-suigai-rireki-converter/app/?event=1959_09_s34_sinsui_t_add24.shp>
+
 ### 汎用ビューア
 
 - pmtiles.io: <https://pmtiles.io/?url=https%3A%2F%2Fshiwaku.github.io%2Fksj-suigai-rireki-converter%2Foutput%2Fsinsui_all.pmtiles>

@@ -51,3 +51,28 @@ export function eventLabel(e: FloodEvent): string {
   const name = e.name ?? '（災害名なし）'
   return `${when} ${name}（${e.count.toLocaleString('ja-JP')}件）`
 }
+
+// ---- URL への保存 ----
+//
+// 「2000年の東海豪雨だけ」のような特定の災害を人に渡せるよう、選択中のイベントを
+// クエリ文字列に載せる。地図位置は MapLibre が URL のハッシュ（#ズーム/緯度/経度）に
+// 書くため、こちらはクエリ側だけを書き換えてハッシュには触らない。
+
+const EVENT_PARAM = 'event'
+
+/** `?event=<元Shapefile名>` を読む。指定が無ければ null。 */
+export function readEventParam(): string | null {
+  return new URLSearchParams(location.search).get(EVENT_PARAM)
+}
+
+/**
+ * `?event=` を現在の選択に合わせて書き換える。履歴は増やさない
+ * （絞り込みの操作ごとに戻るボタンの行き先が増えると、地図の操作感が壊れる）。
+ */
+export function writeEventParam(src: string | null): void {
+  const params = new URLSearchParams(location.search)
+  if (src) params.set(EVENT_PARAM, src)
+  else params.delete(EVENT_PARAM)
+  const query = params.toString()
+  history.replaceState(null, '', `${location.pathname}${query ? `?${query}` : ''}${location.hash}`)
+}

@@ -372,6 +372,115 @@ body {
   margin-bottom: 2px;
 }
 
+/* ---- コンボボックス（水害イベントの検索付き選択） ---- */
+.combo {
+  position: relative;
+}
+
+.combo-input {
+  width: 100%;
+  padding: 6px 26px 6px 8px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-solid);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 12px;
+}
+
+.combo-input::placeholder {
+  color: var(--ink-3);
+}
+
+.combo-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.combo-input:disabled {
+  opacity: 0.6;
+}
+
+.combo-clear {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink-3);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.combo-clear:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+/* 候補はパネル内スクロールに載せず、入力欄に重ねて出す。
+   パネルの他の項目を押し下げると、絞り込みのたびに画面が跳ねる。 */
+.combo-list {
+  position: absolute;
+  z-index: 3;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-solid);
+  box-shadow: var(--shadow);
+}
+
+.combo-opt {
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.combo-opt:hover,
+.combo-opt.active {
+  background: var(--hover);
+}
+
+.combo-opt.active {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.combo-opt[aria-selected='true'] {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.combo-opt-all {
+  border-bottom: 1px solid var(--line);
+  border-radius: 6px 6px 0 0;
+  margin-bottom: 2px;
+  color: var(--ink-2);
+}
+
+.combo-empty {
+  padding: 8px;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
 /* ---- セグメント（色分けの切替） ---- */
 .seg {
   display: flex;

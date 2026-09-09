@@ -90,9 +90,22 @@
             <button id="event-zoom" class="mini-btn" type="button" disabled>範囲へ移動</button>
           </div>
         </div>
-        <select id="event-select" class="select" aria-label="水害イベントを選ぶ">
-          <option value="">すべてのイベント</option>
-        </select>
+        <div class="combo">
+          <input
+            id="event-input"
+            class="combo-input"
+            type="text"
+            role="combobox"
+            aria-expanded="false"
+            aria-controls="event-list"
+            aria-autocomplete="list"
+            aria-label="水害イベントを検索して選ぶ"
+            autocomplete="off"
+            placeholder="災害名・年で検索（例: 東海、2000）"
+          />
+          <button id="event-clear" class="combo-clear" type="button" title="選択を解除" aria-label="選択を解除" hidden>×</button>
+          <ul id="event-list" class="combo-list" role="listbox" aria-label="水害イベント" hidden></ul>
+        </div>
         <p id="event-note" class="note"></p>
       </div>
 

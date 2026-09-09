@@ -41,7 +41,15 @@ import {
   type DemMode,
   type HillshadeMethod,
 } from './terrain'
-import { eventLabel, loadEventIndex, monthLabel, type EventIndex, type FloodEvent } from './events'
+import {
+  loadEventIndex,
+  monthLabel,
+  readEventParam,
+  writeEventParam,
+  type EventIndex,
+  type FloodEvent,
+} from './events'
+import { createEventPicker, type EventPicker } from './eventPicker'
 import { applyThemeAttr, initialTheme, type Theme } from './theme'
 import './style.css'
 
@@ -68,6 +76,16 @@ let index: EventIndex | null = null
 
 const isMobile = window.matchMedia('(max-width: 640px)').matches
 const DEBUG = new URLSearchParams(location.search).has('debug')
+
+/** `?event=` で復元するイベント。索引を読み終えてから適用する。 */
+const initialEvent = readEventParam()
+/**
+ * 起動時に位置ハッシュ（#ズーム/緯度/経度）が付いていたか。
+ * MapLibre は生成後に自分でハッシュを書くため、地図を作る前に見ておく必要がある。
+ * ハッシュがあるなら位置は明示的に共有されたものなので、`?event=` の復元で
+ * 勝手に範囲へ寄せない。
+ */
+const hadPositionHash = location.hash.length > 1
 
 // ---- プロトコル（地図の生成前に一度だけ） ----
 
@@ -448,9 +466,9 @@ typhoonOnlyEl.addEventListener('change', () => {
 
 // ---- 水害イベント ----
 
-const eventSelectEl = el<HTMLSelectElement>('event-select')
 const eventZoomEl = el<HTMLButtonElement>('event-zoom')
 const eventNoteEl = el('event-note')
+let picker: EventPicker | null = null
 
 function selectedEvent(): FloodEvent | null {
   if (!filter.src) return null
@@ -476,25 +494,26 @@ function renderEventNote(): void {
   eventZoomEl.disabled = false
 }
 
-function buildEventSelect(idx: EventIndex): void {
-  for (const e of idx.events) {
-    const opt = document.createElement('option')
-    opt.value = e.src
-    opt.textContent = eventLabel(e)
-    eventSelectEl.append(opt)
-  }
-}
-
-eventSelectEl.addEventListener('change', () => {
-  filter.src = eventSelectEl.value || null
+function selectEvent(src: string | null): void {
+  filter.src = src
+  writeEventParam(src)
   renderEventNote()
   renderLegend()
   applySinsui()
-})
+}
 
-eventZoomEl.addEventListener('click', () => {
-  const e = selectedEvent()
-  if (!e) return
+function buildEventPicker(idx: EventIndex): void {
+  picker = createEventPicker({
+    input: el<HTMLInputElement>('event-input'),
+    list: el<HTMLUListElement>('event-list'),
+    clearBtn: el<HTMLButtonElement>('event-clear'),
+    events: idx.events,
+    onSelect: selectEvent,
+  })
+}
+
+/** 選んだイベントの範囲へ寄せる。パネルの下に隠れないよう左側を広く取る。 */
+function zoomToEvent(e: FloodEvent): void {
   const [west, south, east, north] = e.bounds
   map.fitBounds(
     [
@@ -503,6 +522,11 @@ eventZoomEl.addEventListener('click', () => {
     ],
     { padding: isMobile ? 24 : { top: 40, bottom: 40, left: 360, right: 40 }, maxZoom: 15 },
   )
+}
+
+eventZoomEl.addEventListener('click', () => {
+  const e = selectedEvent()
+  if (e) zoomToEvent(e)
 })
 
 // ---- 地形（Mapterhorn） ----
@@ -701,14 +725,31 @@ initHud()
 loadEventIndex()
   .then((idx) => {
     index = idx
-    buildEventSelect(idx)
+    buildEventPicker(idx)
+
+    // `?event=` の復元。索引が来るまで対象イベントの実在を確かめられないため、
+    // ここで初めて適用する。知らない値が来たらクエリごと捨てる。
+    const restored = initialEvent && idx.events.find((e) => e.src === initialEvent)
+    if (restored) {
+      picker?.setSelected(restored.src)
+      selectEvent(restored.src)
+      // 位置ハッシュ付きのリンクは位置が明示されているので、そちらを尊重する
+      if (!hadPositionHash) zoomToEvent(restored)
+    } else {
+      if (initialEvent) diag(`?event= のイベントが見つからない: ${initialEvent}`)
+      writeEventParam(null)
+    }
+
     renderLegend()
     renderEventNote()
   })
   .catch((err: unknown) => {
     diag(`events.json を読めない: ${String(err)}`)
-    eventNoteEl.textContent = 'イベント索引を読み込めませんでした（絞り込みは年と台風性のみ利用できます）。'
-    eventSelectEl.disabled = true
+    eventNoteEl.textContent =
+      'イベント索引を読み込めませんでした（絞り込みは年と台風性のみ利用できます）。'
+    const input = el<HTMLInputElement>('event-input')
+    input.disabled = true
+    input.placeholder = 'イベント索引を読み込めませんでした'
   })
 
 // WebGL コンテキスト消失からの復帰。3D地形を有効にするとGPU負荷が上がり、
