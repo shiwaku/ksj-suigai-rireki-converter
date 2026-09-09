@@ -45,6 +45,15 @@ import {
   type EventIndex,
   type FloodEvent,
 } from './events'
+import {
+  DEFAULT_RELIEF_OPACITY,
+  RELIEF_ID,
+  RELIEF_LEGEND,
+  RELIEF_SOURCE,
+  registerReliefProtocol,
+  reliefLayer,
+  reliefSourceSpec,
+} from './relief'
 import { createEventPicker, type EventPicker } from './eventPicker'
 import { applyThemeAttr, initialTheme, type Theme } from './theme'
 import './style.css'
@@ -59,6 +68,8 @@ let sinsuiOn = true
 let opacity = DEFAULT_OPACITY
 const filter: FilterState = { ...DEFAULT_FILTER }
 
+let reliefOn = false
+let reliefOpacity = DEFAULT_RELIEF_OPACITY
 let hillshadeOn = true
 let hillshadeMethod: HillshadeMethod = 'igor'
 let hillshadeExag = HILLSHADE_PRESETS.igor.exaggeration
@@ -99,6 +110,7 @@ const hadPositionHash = location.hash.length > 1
 const protocol = new Protocol()
 maplibregl.addProtocol('pmtiles', protocol.tile)
 registerTerrainProtocols(maplibregl)
+registerReliefProtocol(maplibregl)
 
 // ---- 地図 ----
 
@@ -217,6 +229,7 @@ function initHud(): void {
 const OWN_LAYER_IDS = new Set([
   FILL_ID,
   OUTLINE_ID,
+  RELIEF_ID,
   HILLSHADE_ID,
   CONTOUR_LINE_ID,
   CONTOUR_TEXT_ID,
@@ -254,8 +267,9 @@ function whenStyleReady(fn: () => void): void {
 
 /**
  * 自前レイヤーの積み順（下から）:
- *   背景地図 → 陰影起伏 → 浸水域（塗り・輪郭）→ 等高線 → 背景地図のラベル
+ *   背景地図 → 段彩 → 陰影起伏 → 浸水域（塗り・輪郭）→ 等高線 → 背景地図のラベル
  *
+ * 段彩を陰影起伏の下に置くのが要点。陰影が段彩の上に乗ることで陰影段彩図になる。
  * 等高線を浸水域の上に置くのは、浸水域を透かして地形の高低を追えるようにするため。
  *
  * 各グループは「自分より上にあるグループの先頭」の手前に差し込む。こうすると
@@ -263,12 +277,27 @@ function whenStyleReady(fn: () => void): void {
  * 全部外して積み直していたため、地形のトグルを押すたびに 14,585 件の
  * 浸水域が再構築され、そのあいだ画面が止まっていた。
  */
-function beforeIdFor(group: 'hillshade' | 'sinsui' | 'contour'): string | undefined {
+function beforeIdFor(group: 'relief' | 'hillshade' | 'sinsui' | 'contour'): string | undefined {
   const labels = labelBeforeId()
   const contour = map.getLayer(CONTOUR_LINE_ID) ? CONTOUR_LINE_ID : labels
   if (group === 'contour') return labels
   if (group === 'sinsui') return contour
-  return map.getLayer(FILL_ID) ? FILL_ID : contour
+  const hillshade = map.getLayer(FILL_ID) ? FILL_ID : contour
+  if (group === 'hillshade') return hillshade
+  return map.getLayer(HILLSHADE_ID) ? HILLSHADE_ID : hillshade
+}
+
+/** 段彩（標高の色）。陰影起伏の下に敷く。 */
+function applyRelief(): void {
+  whenStyleReady(() => {
+    removeLayer(RELIEF_ID)
+    if (!reliefOn) {
+      removeSource(RELIEF_SOURCE)
+      return
+    }
+    if (!map.getSource(RELIEF_SOURCE)) map.addSource(RELIEF_SOURCE, reliefSourceSpec())
+    map.addLayer(reliefLayer(reliefOpacity), beforeIdFor('relief'))
+  })
 }
 
 /** 陰影起伏。算出方法ごとに paint プリセットが変わるため、貼り直しで差し替える。 */
@@ -339,6 +368,7 @@ function applyTerrain(): void {
 
 /** 全グループを積み直す。背景スタイルを差し替えたあとに使う。 */
 function applyLayers(): void {
+  applyRelief()
   applyHillshade()
   applySinsuiLayers()
   applyContours()
@@ -571,6 +601,56 @@ eventZoomEl.addEventListener('click', () => {
 
 // ---- 地形（Mapterhorn） ----
 
+const reliefOnEl = el<HTMLInputElement>('relief-on')
+const reliefOptsEl = el('relief-opts')
+const reliefOpacityEl = el<HTMLInputElement>('relief-opacity')
+const reliefOpacityValEl = el('relief-opacity-val')
+const reliefLegendEl = el('relief-legend')
+
+reliefOnEl.addEventListener('change', () => {
+  reliefOn = reliefOnEl.checked
+  reliefOptsEl.hidden = !reliefOn
+  applyRelief()
+})
+
+reliefOpacityEl.addEventListener('input', () => {
+  reliefOpacity = Number(reliefOpacityEl.value)
+  reliefOpacityValEl.textContent = `${Math.round(reliefOpacity * 100)}%`
+  if (map.getLayer(RELIEF_ID)) {
+    map.setPaintProperty(RELIEF_ID, 'raster-opacity', reliefOpacity)
+  }
+})
+
+/**
+ * 標高の凡例。帯は等幅で並べる。実際の標高間隔は 1m〜1000m と幅が違い、
+ * 値に比例した幅にすると浸水実績で見たい低標高側（0〜140m）が
+ * 全体の数%に潰れて読めなくなる。目盛りの数字で実際の境界を示す。
+ */
+function buildReliefLegend(): void {
+  const bar = document.createElement('div')
+  bar.className = 'rl-bar'
+  for (const { from, color } of RELIEF_LEGEND) {
+    const cell = document.createElement('span')
+    cell.className = 'rl-cell'
+    cell.style.background = color
+    cell.title = `${from}m 以上`
+    bar.append(cell)
+  }
+  const ticks = document.createElement('div')
+  ticks.className = 'rl-ticks'
+  // 帯は16段。2段ごとに下限標高を出す（全段に出すと数字が重なる）。
+  RELIEF_LEGEND.forEach(({ from }, i) => {
+    const t = document.createElement('span')
+    t.className = 'rl-tick'
+    t.textContent = i % 2 === 1 ? String(from) : ''
+    ticks.append(t)
+  })
+  const unit = document.createElement('div')
+  unit.className = 'rl-unit'
+  unit.textContent = '標高（m）'
+  reliefLegendEl.replaceChildren(bar, ticks, unit)
+}
+
 const hillshadeOnEl = el<HTMLInputElement>('hillshade-on')
 const hillshadeOptsEl = el('hillshade-opts')
 const hillshadeMethodEl = el<HTMLSelectElement>('hillshade-method')
@@ -777,6 +857,9 @@ renderEventNote()
 opacityValEl.textContent = `${Math.round(opacity * 100)}%`
 hillshadeExagValEl.textContent = hillshadeExag.toFixed(2)
 terrainExagValEl.textContent = terrainExag.toFixed(2)
+reliefOpacityValEl.textContent = `${Math.round(reliefOpacity * 100)}%`
+buildReliefLegend()
+reliefOptsEl.hidden = !reliefOn
 hillshadeOptsEl.hidden = !hillshadeOn
 terrainOptsEl.hidden = !terrainOn
 // スマホでは初期状態でパネルを畳んで地図を広く見せる

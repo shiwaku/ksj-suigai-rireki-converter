@@ -13,7 +13,7 @@
 | 浸水域の表示 | 14,585 件 / 60 イベント（1896〜2019 年）。塗りと輪郭の2枚、不透明度スライダー付き |
 | 成因 | **すべて / 台風 / 大雨・その他** のセグメント。塗り分けと絞り込みを兼ねる（台風 9,891 件 / 大雨・その他 4,694 件） |
 | イベント単位 | 60 イベントを**検索して**1件に絞り、その範囲へ移動。選択は URL に載る |
-| 地形（Mapterhorn） | 陰影起伏（5方式・強調可変）/ 3D地形（起伏倍率可変）/ 等高線 |
+| 地形（Mapterhorn） | **段彩**（標高の色分け・凡例つき）/ 陰影起伏（5方式・強調可変）/ 3D地形（起伏倍率可変）/ 等高線。段彩＋陰影起伏で陰影段彩図になる |
 | 背景地図 | 淡色 / 標準（地理院 最適化ベクトルタイル）/ 写真（地理院シームレス空中写真）/ 白図 |
 | その他 | ライト/ダークテーマ、クリックで属性ポップアップ（重なった浸水域を全件）、位置を URL ハッシュに保存 |
 
@@ -66,8 +66,12 @@ npm run preview  # ビルド結果を確認
 3. `npm run check:search` — イベント検索の絞り込みを `public/events.json` の実データで検証する。
    括弧や数字の全角半角の正規化を間違えると「東海」や「2000」で目的の災害に当たらなくなるが、
    ブラウザで打ってみるまで気付けないため、代表的なクエリの期待結果を照合する
-4. `npm run export:style` — `public/style/sinsui-{light,dark}.json` を書き出す
-5. `vite build` — `../app/` へ出力
+4. `npm run check:relief` — 段彩の標高→色の引き当てを検証する。terrarium のバイト並びの
+   解釈やルックアップテーブルの添字を間違えても例外は出ず「なんとなく変な色の地図」に
+   なるだけなので、代表的な標高の色・帯の途中の補間・凡例と地図の色の一致・
+   DEM タイルの到達性を確かめる
+5. `npm run export:style` — `public/style/sinsui-{light,dark}.json` を書き出す
+6. `vite build` — `../app/` へ出力
 
 ### 配信先の差し替え
 
@@ -95,6 +99,7 @@ viewer/
     main.ts             状態 → レイヤーの組み立て、UI の配線
     layers.ts           浸水実績のソース・レイヤー・配色・絞り込み・ポップアップ
     terrain.ts          Mapterhorn の DEM（陰影起伏 / 3D地形 / 等高線）
+    relief.ts           段彩（DEM をピクセル単位で色に置き換える relief:// プロトコル）
     basemap.ts          背景地図の切替とダーク化
     events.ts           イベント索引（events.json）の読み込みと ?event= の読み書き
     eventPicker.ts      イベントの検索付き選択（コンボボックス）
@@ -103,6 +108,7 @@ viewer/
   scripts/
     check-style.mjs     全組み合わせのスタイル検証
     check-search.mjs    イベント検索の絞り込み検証
+    check-relief.mjs    段彩の標高→色の検証
     export-style.mjs    静的スタイルの書き出し（QGIS / Maputnik 用）
     build_events.py     events.json の生成（geopandas）
   public/
@@ -157,6 +163,33 @@ viewer/
 **片方だけ変えると地図と凡例が食い違う**ため、`check:style` が MapLibre の式を
 実際に評価して規則を固定している。
 
+### 段彩（陰影段彩図）
+
+MapLibre には標高を直接色に写すレイヤーが無い。DEM タイルを取得してピクセルごとに
+標高を読み、色に置き換えたラスタタイルを返すカスタムプロトコル（`relief://`）で作る。
+方式は国土地理院の点群タイル閲覧サイト
+（[gsi-cyberjapan/3dpc-3dtiles](https://github.com/gsi-cyberjapan/3dpc-3dtiles)）に倣った。
+ピクセル走査の実装は全国Ｑ地図（MIT license, Copyright 2024 全国Ｑ地図管理者）に由来し、
+`src/relief.ts` の冒頭に表示を残している。
+
+**段彩は陰影起伏の下に敷く**のが要点。陰影が段彩の上に乗ることで陰影段彩図になる
+（積み順は `beforeIdFor()`）。
+
+配色は点群タイル閲覧サイトの既定値（全国Ｑ地図由来）で、日本の地形図で見慣れた
+「低地は青緑 → 平野は緑 → 山地は黄〜茶 → 高山は白」。浸水実績を読む用途にも都合がよく、
+標高 0m 前後（濃尾平野南部や弥富のような海抜0m地帯）が青寄りに出るため低平地が一目で分かる。
+**海面下も塗る**（標高0以下を透明にすると、いちばん見たい0m地帯が消える）。
+
+高速化のため、標高から色を引くのは 65536 段のルックアップテーブルにしてある。
+terrarium は `標高 = (r<<8) + g + b/256 - 32768` で、上位2バイト `(r<<8)|g` が
+そのまま 1m 刻みの添字になる。段彩の色は 1m 未満の差を持たないので `b` は捨ててよい。
+参照実装のようにピクセルごとに色の帯を線形探索すると、1タイル 512×512 = 26万回の
+分岐と乗算が走る。
+
+凡例の帯は**等幅**で並べる。実際の標高間隔は 1m〜1000m と幅が違い、値に比例した幅に
+すると浸水実績で見たい低標高側（0〜140m）が全体の数%に潰れて読めない。
+実際の境界は目盛りの数字が示す。
+
 ### DEM の配信方式は選ばせない
 
 Mapterhorn は TileJSON / ZXY / PMTiles の3通りで DEM を配信しており、
@@ -201,4 +234,5 @@ UI 側では、操作の重さに応じて処理を分けている。`setFilter`
 
 - 浸水実績: [国土数値情報（水害履歴・浸水実績）国土交通省](https://nlftp.mlit.go.jp/ksj/) を加工して作成
 - 地形: [Mapterhorn](https://mapterhorn.com/)（[attribution](https://mapterhorn.com/attribution)）
+- 段彩の実装: [gsi-cyberjapan/3dpc-3dtiles](https://github.com/gsi-cyberjapan/3dpc-3dtiles)（国土地理院 点群タイル閲覧サイト）を参考。ピクセル走査は[全国Ｑ地図](https://github.com/qchizu/qchizu_maplibre)（MIT license, Copyright 2024 全国Ｑ地図管理者）由来
 - 背景: [国土地理院 最適化ベクトルタイル](https://github.com/gsi-cyberjapan/optimal_bvmap) / [地理院タイル](https://maps.gsi.go.jp/development/ichiran.html)

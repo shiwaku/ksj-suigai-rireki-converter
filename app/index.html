@@ -13,8 +13,8 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="水害履歴" />
-  <script type="module" crossorigin src="/ksj-suigai-rireki-converter/app/assets/index-CJDQ-a5U.js"></script>
-  <link rel="stylesheet" crossorigin href="/ksj-suigai-rireki-converter/app/assets/index-gjKiNAQS.css">
+  <script type="module" crossorigin src="/ksj-suigai-rireki-converter/app/assets/index-B2SahcFJ.js"></script>
+  <link rel="stylesheet" crossorigin href="/ksj-suigai-rireki-converter/app/assets/index-DOFVH9t5.css">
 </head>
 <body>
   <div id="map"></div>
@@ -94,6 +94,20 @@
         </div>
 
         <label class="toggle">
+          <input id="relief-on" type="checkbox" />
+          <span class="switch"></span>
+          <span class="t-label">段彩（標高）</span>
+        </label>
+        <div id="relief-opts" hidden>
+          <div class="slider-row">
+            <label for="relief-opacity">不透明度</label>
+            <input id="relief-opacity" type="range" min="0.1" max="1" step="0.05" value="0.55" />
+            <span id="relief-opacity-val" class="op-val">55%</span>
+          </div>
+          <div id="relief-legend" class="relief-legend" aria-label="標高の凡例"></div>
+        </div>
+
+        <label class="toggle">
           <input id="hillshade-on" type="checkbox" checked />
           <span class="switch"></span>
           <span class="t-label">陰影起伏</span>
@@ -139,6 +153,6 @@
       <span id="build-ver" class="build-ver"></span>
     </footer>
   </section>
-
+
 </body>
 </html>

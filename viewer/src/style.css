@@ -338,9 +338,53 @@ body {
 }
 
 /* 地形の下位オプションは、親トグルに従属することが分かるよう字下げする */
+#relief-opts,
 #hillshade-opts,
 #terrain-opts {
   margin-left: 42px;
+}
+
+/* ---- 段彩の凡例 ---- */
+.relief-legend {
+  margin: 6px 8px 8px 0;
+}
+
+.rl-bar {
+  display: flex;
+  height: 10px;
+  overflow: hidden;
+  border-radius: 3px;
+  box-shadow: 0 0 0 1px var(--line-2);
+}
+
+.rl-cell {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 目盛りは帯のセルと同じ等幅で並べ、境界の真下に数字が来るようにする */
+.rl-ticks {
+  display: flex;
+  margin-top: 2px;
+}
+
+.rl-tick {
+  flex: 1;
+  min-width: 0;
+  font-size: 8.5px;
+  line-height: 1.2;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+  /* セルの左端が示す下限標高なので、数字も左端に寄せる */
+  text-align: left;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.rl-unit {
+  margin-top: 2px;
+  font-size: 9.5px;
+  color: var(--ink-3);
 }
 
 /* ---- セレクト ---- */
