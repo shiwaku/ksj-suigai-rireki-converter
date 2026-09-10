@@ -35,8 +35,7 @@ const fail = (msg) => {
 }
 const ok = (msg) => console.log(`ok   ${msg}`)
 
-// LUT は標高 1cm 刻みなので、帯の境界がその格子に乗らないと 1〜2/255 ずれる
-// （0〜5m を 14 分割すると境界は 0.357m 刻みで、1cm の格子に乗らない）。
+// LUT は標高 1cm 刻みで、色は 0〜255 の整数に丸めるので 1〜3/255 ずれることがある。
 // 目に見えない差なので許容する。
 const same = (a, b) => a.every((v, i) => Math.abs(v - b[i]) <= 3)
 const rgb = (c) => `rgb(${c.map((v) => Math.round(v)).join(',')})`
@@ -63,26 +62,47 @@ try {
     else fail(`全国 ${h}m -> ${rgb(got)}（期待 ${rgb(want)}） ${note}`)
   }
 
-  // ---- 2. 指定レンジは16色が min〜max に等間隔で割られているか ----
+  // ---- 2. 指定レンジは刻み幅で割った段になっているか ----
+  //
+  // 当初は 15 色を等分していて 1 段が 0.357m のような半端な値だった。
+  // 刻みを先に決める方式（0.5m、1m、5m…）に変えたので、段の境界が刻みの
+  // 倍数に乗っていること、min と max の両端に境界があることを見る。
+  for (const r of R.RELIEF_RANGES.filter((r) => r.mode === 'linear')) {
+    const st = R.reliefStops(r)
+    const bands = Math.round((r.max - r.min) / r.step)
+    const onGrid = st.every((s, i) => Math.abs(s.from - (r.min + r.step * i)) < 1e-9)
+    if (st.length === bands + 1 && onGrid && st[st.length - 1].from === r.max) {
+      ok(`${r.key.padEnd(8)} ${r.min}〜${r.max}m を ${r.step}m 刻みで ${bands} 段（境界 ${st.length}）`)
+    } else {
+      fail(`${r.key} の段が ${r.step}m 刻みに乗っていない: ${st.map((s) => s.from).join(', ')}`)
+    }
+    // 凡例の数字は端の min と max に必ず付き、6 個以下に収まる
+    const every = R.reliefTickEvery(r)
+    const labels = st.filter((_, i) => i % every === 0).map((s) => s.from)
+    if (labels[0] === r.min && labels[labels.length - 1] === r.max && labels.length <= 6) {
+      ok(`${r.key.padEnd(8)} 凡例の数字 ${labels.join(', ')}`)
+    } else {
+      fail(`${r.key} の凡例の数字が端に付かないか多すぎる: ${labels.join(', ')}`)
+    }
+  }
   const stops = R.reliefStops(micro)
-  const step = (micro.max - micro.min) / (stops.length - 1)
-  const even = stops.every((s, i) => Math.abs(s.from - (micro.min + step * i)) < 1e-9)
-  if (even) ok(`微地形 ${stops.length}段が 0〜${micro.max}m に等間隔（1段 ${step.toFixed(3)}m）`)
-  else fail('微地形レンジの段が等間隔でない')
+  const step = micro.step
 
-  // 引き伸ばすときは先頭の重複色（-10m と 0m が同色）を落として 15 色にする
+  // 補間の元は全国の配色。両端の色は全国の 1 段目（先頭の重複色を除く）と最上段に一致する
   const absStops = R.reliefStops(abs)
-  if (stops.length === absStops.length - 1) ok(`微地形 ${stops.length}色（全国の先頭の重複色を除く）`)
-  else fail(`微地形の色数が ${stops.length}（期待 ${absStops.length - 1}）`)
-  if (stops.every((s, i) => same(s.color, absStops[i + 1].color))) ok('微地形の配色は全国と同じ並び')
-  else fail('微地形レンジの色が全国と違う')
+  if (same(stops[0].color, absStops[1].color) && same(stops[stops.length - 1].color, absStops[absStops.length - 1].color)) {
+    ok('微地形の両端の色は全国の配色（下端は先頭の重複色を除いた 1 段目）と同じ')
+  } else {
+    fail('微地形レンジの両端の色が全国と違う')
+  }
 
   // ---- 3. 微小な標高差が色の差になるか（1m 丸めに戻ったら落ちる） ----
   //
-  // 内水浸水の原因になる窪地は数十cm。0〜5m レンジなら 1段 33cm なので、
-  // 30cm の差が色として出なければ用を成さない。
+  // 内水浸水の原因になる窪地は数十cm。0〜5m レンジは 1 段 50cm で、段の中も
+  // 線形補間しているので、それより小さい差も色として出なければ用を成さない。
   const MICRO_PAIRS = [
-    [1.0, 1.34, '34cm の差（1段ぶん）'],
+    [1.0, 1.5, `${step * 100}cm の差（1段ぶん）`],
+    [1.0, 1.34, '34cm の差'],
     [1.0, 1.05, '5cm の差'],
     [2.5, 2.52, '2cm の差'],
   ]
@@ -114,7 +134,10 @@ try {
   // 段彩は「段」が読めることが要件。明度の単調性は要件ではない
   // （地形図の配色は緑の平野が明るく茶の山地が暗いので、もともと単調でない）。
   // 隣接する段の色が近すぎないことを見る。
-  const MIN_BAND_DIFF = 20 // RGB のチェビシェフ距離
+  //
+  // 元の配色 15 色で隣どうしの最小色差は 28（3000m → 4000m の白系）。20 段のレンジは
+  // これを 14/20 に縮めて補間するので最小 19.6 になる。白系の 20/255 は見分けられる。
+  const MIN_BAND_DIFF = 15 // RGB のチェビシェフ距離
   for (const r of R.RELIEF_RANGES) {
     const cols = R.reliefStops(r).map((s) => s.color)
     let worst = Infinity
@@ -154,7 +177,7 @@ try {
 
   // ---- 7. DEM タイルの取得先が生きているか ----
   const url = R.reliefSourceSpec(micro)
-    .tiles[0].replace(/^relief:\/\/[^/]+\/[^/]+\/[^/]+\//, '')
+    .tiles[0].replace(/^relief:\/\/[^/]+\/[^/]+\/[^/]+\/[^/]+\//, '')
     .replace('{z}', '10')
     .replace('{x}', '901')
     .replace('{y}', '405')

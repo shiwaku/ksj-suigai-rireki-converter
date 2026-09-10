@@ -57,8 +57,13 @@ type Stop = { from: number; color: [number, number, number] }
 // 低地の内水浸水の原因を読むには使えない。標高 0〜10m の氾濫平野は 2 段に
 // 収まってしまい、内水を溜める微小な窪地（数十cm〜数mの凹み）が現れない。
 //
-// そこでレンジを選べるようにし、指定レンジでは16色を等間隔に引き伸ばす。
-// 0〜5m なら 1 段あたり約 33cm になり、微地形が読める。
+// そこでレンジを選べるようにし、指定レンジでは **1段の刻み幅**（0.5m、1m、5m…）を
+// 決めて、全国の配色を段数ぶんに補間して塗る。
+//
+// 当初は 15 色を min〜max に等分していたが、それだと 1 段が「0〜5m で 0.357m」
+// 「0〜20m で 1.43m」と半端になり、凡例の目盛りも読みにくかった。刻みを先に
+// 決めれば目盛りが 0, 0.5, 1.0… と揃い、「この窪地は 1 段 = 50cm 低い」と読める。
+// 0.5m は基盤地図情報 DEM の標高精度（DEM5A / DEM1A で ±0.3m 程度）にも見合う。
 //
 // Mapterhorn は日本について国土地理院の基盤地図情報 DEM
 // （DEM1A = 1mメッシュ、DEM5A/5B/5C = 5mメッシュ、DEM10A/10B = 10mメッシュ）を
@@ -67,20 +72,21 @@ type Stop = { from: number; color: [number, number, number] }
 export interface ReliefRange {
   key: string
   label: string
-  /** 'abs' は TINTS の絶対標高をそのまま使う。'linear' は16色を min〜max に等間隔で割る。 */
+  /** 'abs' は TINTS の絶対標高をそのまま使う。'linear' は min〜max を step 刻みで塗る。 */
   mode: 'abs' | 'linear'
   min: number
   max: number
-  /** 凡例の目盛りの小数桁。レンジが狭いほど桁を増やさないと段の境界が読めない。 */
-  decimals: number
+  /** 'linear' の 1 段の標高幅（m）。(max - min) を割り切る値にする。'abs' では使わない。 */
+  step?: number
 }
 
+// 刻み幅はセレクトの名前に入れない（幅に収まらず末尾が切れる）。凡例の下の「1段 0.5m」が示す。
 export const RELIEF_RANGES: ReliefRange[] = [
-  { key: 'all', label: '全国（地形図の絶対標高）', mode: 'abs', min: -10, max: 4000, decimals: 0 },
-  { key: 'mountain', label: '山地 0〜1000m', mode: 'linear', min: 0, max: 1000, decimals: 0 },
-  { key: 'plain', label: '平野 0〜100m', mode: 'linear', min: 0, max: 100, decimals: 0 },
-  { key: 'lowland', label: '低地 0〜20m', mode: 'linear', min: 0, max: 20, decimals: 1 },
-  { key: 'micro', label: '微地形 0〜5m（窪地）', mode: 'linear', min: 0, max: 5, decimals: 2 },
+  { key: 'all', label: '全国（地形図の絶対標高）', mode: 'abs', min: -10, max: 4000 },
+  { key: 'mountain', label: '山地 0〜1000m', mode: 'linear', min: 0, max: 1000, step: 50 },
+  { key: 'plain', label: '平野 0〜100m', mode: 'linear', min: 0, max: 100, step: 5 },
+  { key: 'lowland', label: '低地 0〜20m', mode: 'linear', min: 0, max: 20, step: 1 },
+  { key: 'micro', label: '微地形 0〜5m（窪地）', mode: 'linear', min: 0, max: 5, step: 0.5 },
 ]
 
 /** 内水浸水の原因把握が主目的なので、既定は微地形が読めるレンジにする。 */
@@ -89,29 +95,72 @@ export const DEFAULT_RELIEF_RANGE = RELIEF_RANGES[3]
 export const reliefRangeByKey = (key: string): ReliefRange =>
   RELIEF_RANGES.find((r) => r.key === key) ?? DEFAULT_RELIEF_RANGE
 
+/** 凡例の目盛りに要る小数桁。刻みが 0.5m なら 1 桁、整数なら 0 桁。 */
+export function reliefDecimals(range: ReliefRange): number {
+  if (range.mode === 'abs' || !range.step) return 0
+  const frac = String(range.step).split('.')[1]
+  return frac ? frac.length : 0
+}
+
+/**
+ * 凡例に数字を出す目盛りの間隔（何段ごとか）。
+ *
+ * 全段に出すと数字が重なるので、段数を割り切る 1・2・5・10… のうち、
+ * 数字が 6 個以下に収まる最小の間隔を選ぶ。0〜5m/0.5m 刻み（10段）なら 2 段ごとに
+ * 0, 1, 2, 3, 4, 5。0〜20m/1m 刻み（20段）なら 5 段ごとに 0, 5, 10, 15, 20。
+ * 端の min と max には必ず数字が付く。
+ */
+export function reliefTickEvery(range: ReliefRange): number {
+  const bands = reliefStops(range).length - 1
+  for (const k of [1, 2, 5, 10, 20, 50, 100]) {
+    if (bands % k === 0 && bands / k <= 5) return k
+  }
+  return Math.max(1, Math.ceil(bands / 5))
+}
+
 /**
  * レンジに応じた色の帯。凡例と LUT の両方がこれを使う。
  *
- * 引き伸ばすときは先頭の色を1つ落として 15 色にする。TINTS の -10m と 0m は
- * 意図的に同色（海面下と海面を同じ色で塗る）で、そのまま等間隔に割ると
+ * 'linear' では min から max まで step 刻みの段を作り、全国の配色（TINTS）を
+ * 段数ぶんに線形補間して割り当てる。段数が 15 色より多ければ中間色が増え、
+ * 少なければ間引かれるが、「低地は青緑 → 平野は緑 → 山地は黄〜茶 → 高山は白」
+ * の並びは変わらない。
+ *
+ * 補間の元にするのは TINTS の先頭の色を1つ落とした 15 色。-10m と 0m は
+ * 意図的に同色（海面下と海面を同じ色で塗る）で、そのまま使うと
  * 最下段の2段が同色になり、レンジの下端——低地でいちばん見たい足元——が
  * 1段ぶん潰れてしまう。
  */
 export function reliefStops(range: ReliefRange): Stop[] {
   if (range.mode === 'abs') return TINTS
-  const colors = TINTS.slice(1).map((t) => t.color)
-  const span = range.max - range.min
-  return colors.map((color, i) => ({
-    from: range.min + (span * i) / (colors.length - 1),
-    color,
-  }))
+  const step = range.step ?? (range.max - range.min) / 14
+  const bands = Math.round((range.max - range.min) / step)
+  const ramp = TINTS.slice(1).map((t) => t.color)
+  const stops: Stop[] = []
+  for (let i = 0; i <= bands; i++) {
+    // 段の位置 0〜1 を 15 色のグラデーション上の位置に写して補間する
+    const u = (i / bands) * (ramp.length - 1)
+    const lo = Math.floor(u)
+    const hi = Math.min(lo + 1, ramp.length - 1)
+    const t = u - lo
+    const color: [number, number, number] = [
+      ramp[lo][0] + t * (ramp[hi][0] - ramp[lo][0]),
+      ramp[lo][1] + t * (ramp[hi][1] - ramp[lo][1]),
+      ramp[lo][2] + t * (ramp[hi][2] - ramp[lo][2]),
+    ]
+    // 0.1 の 3 倍が 0.30000000000000004 になる類の誤差を刻みの桁で丸め、
+    // 凡例の数字とタイル URL のキーを揃える
+    const from = Number((range.min + step * i).toFixed(6))
+    stops.push({ from, color })
+  }
+  return stops
 }
 
 /** 凡例に出す帯。 */
 export function reliefLegend(range: ReliefRange): { from: number; color: string }[] {
   return reliefStops(range).map((t) => ({
     from: t.from,
-    color: `rgb(${t.color[0]},${t.color[1]},${t.color[2]})`,
+    color: `rgb(${Math.round(t.color[0])},${Math.round(t.color[1])},${Math.round(t.color[2])})`,
   }))
 }
 
@@ -161,7 +210,7 @@ function lutSteps(range: ReliefRange): number {
 }
 
 function lut(range: ReliefRange): Uint8Array {
-  const key = `${range.mode}:${range.min}:${range.max}`
+  const key = `${range.mode}:${range.min}:${range.max}:${range.step ?? ''}`
   const hit = lutCache.get(key)
   if (hit) return hit
   const stops = reliefStops(range)
@@ -235,7 +284,7 @@ interface MaplibreLike {
 }
 
 /**
- * `relief://<mode>/<min>/<max>/<DEMタイルのURL>` を登録する。地図の生成前に一度だけ呼ぶ。
+ * `relief://<mode>/<min>/<max>/<step>/<DEMタイルのURL>` を登録する。地図の生成前に一度だけ呼ぶ。
  * DEM の取得先は陰影起伏・3D地形と同じ Mapterhorn の ZXY エンドポイント。
  *
  * レンジを URL に埋めるのは、MapLibre がタイルを URL でキャッシュするため。
@@ -246,14 +295,14 @@ export function registerReliefProtocol(maplibre: MaplibreLike): void {
     RELIEF_PROTOCOL,
     async (params: { url: string }, abortController: AbortController) => {
       const rest = params.url.replace(`${RELIEF_PROTOCOL}://`, '')
-      const [mode, min, max, ...urlParts] = rest.split('/')
+      const [mode, min, max, step, ...urlParts] = rest.split('/')
       const range: ReliefRange = {
         key: 'url',
         label: '',
         mode: mode === 'abs' ? 'abs' : 'linear',
         min: Number(min),
         max: Number(max),
-        decimals: 0,
+        step: step === '-' ? undefined : Number(step),
       }
       const res = await fetch(urlParts.join('/'), { signal: abortController.signal })
       if (!res.ok) return { data: null }
@@ -265,7 +314,7 @@ export function registerReliefProtocol(maplibre: MaplibreLike): void {
 export function reliefSourceSpec(range: ReliefRange): RasterSourceSpecification {
   return {
     type: 'raster',
-    tiles: [`${RELIEF_PROTOCOL}://${range.mode}/${range.min}/${range.max}/${ZXY_TEMPLATE}`],
+    tiles: [`${RELIEF_PROTOCOL}://${range.mode}/${range.min}/${range.max}/${range.step ?? '-'}/${ZXY_TEMPLATE}`],
     tileSize: 512,
     // 微小な窪地を読むには DEM の細かさが要る。Mapterhorn が持つ基盤地図情報 DEM
     // （1m / 5m メッシュ）の細かさは深いズームにしか現れない。ここを上げるほど

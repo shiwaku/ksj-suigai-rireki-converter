@@ -53,9 +53,11 @@ import {
   RELIEF_SOURCE,
   registerReliefProtocol,
   reliefLayer,
+  reliefDecimals,
   reliefLegend,
   reliefRangeByKey,
   reliefSourceSpec,
+  reliefTickEvery,
   type ReliefRange,
 } from './relief'
 import { createEventPicker, type EventPicker } from './eventPicker'
@@ -663,12 +665,13 @@ reliefOpacityEl.addEventListener('input', () => {
  *
  * 「全国」レンジでは実際の標高間隔が 1m〜1000m と幅が違い、値に比例した幅に
  * すると浸水実績で見たい低標高側（0〜140m）が全体の数%に潰れて読めなくなる。
- * 指定レンジでは16色を等間隔に割っているので、等幅がそのまま実際の間隔になる。
+ * 指定レンジでは刻み幅で等間隔に割っているので、等幅がそのまま実際の間隔になる。
  * どちらでも実際の境界は目盛りの数字が示す。
  */
 function buildReliefLegend(): void {
   const legend = reliefLegend(reliefRange)
-  const fmt = (v: number): string => v.toFixed(reliefRange.decimals)
+  // 刻みの桁で丸めたうえで末尾の 0 は落とす（0.5m 刻みでも整数の目盛りは「1」と出す）
+  const fmt = (v: number): string => String(Number(v.toFixed(reliefDecimals(reliefRange))))
 
   const bar = document.createElement('div')
   bar.className = 'rl-bar'
@@ -682,11 +685,15 @@ function buildReliefLegend(): void {
 
   const ticks = document.createElement('div')
   ticks.className = 'rl-ticks'
-  // 帯は16段。2段ごとに下限標高を出す（全段に出すと数字が重なる）。
+  // 全段に数字を出すと重なるので間引く。「全国」は16段で境界が不揃いなので
+  // 2段ごと（0, 10, 60, 300…）。指定レンジは刻みが揃っているので、端の min と max に
+  // 数字が付くよう段数を割り切る間隔で出す（0〜20m/1m 刻みなら 0, 5, 10, 15, 20）。
+  const every = reliefRange.mode === 'abs' ? 2 : reliefTickEvery(reliefRange)
+  const show = (i: number): boolean => (reliefRange.mode === 'abs' ? i % 2 === 1 : i % every === 0)
   legend.forEach(({ from }, i) => {
     const t = document.createElement('span')
     t.className = 'rl-tick'
-    t.textContent = i % 2 === 1 ? fmt(from) : ''
+    t.textContent = show(i) ? fmt(from) : ''
     ticks.append(t)
   })
 
@@ -695,7 +702,7 @@ function buildReliefLegend(): void {
   unit.textContent =
     reliefRange.mode === 'abs'
       ? '標高（m）・段の幅は実際の標高間隔と異なる'
-      : `標高（m）・1段 ${((reliefRange.max - reliefRange.min) / (legend.length - 1)).toFixed(2)}m`
+      : `標高（m）・1段 ${fmt(reliefRange.step ?? 0)}m`
   reliefLegendEl.replaceChildren(bar, ticks, unit)
 }
 
