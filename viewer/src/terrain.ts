@@ -38,8 +38,8 @@ export const DEM_MODES: { key: DemMode; label: string }[] = [
 export type HillshadeMethod = 'igor' | 'standard' | 'basic' | 'combined' | 'multidirectional'
 
 export const HILLSHADE_METHODS: { key: HillshadeMethod; label: string }[] = [
+  { key: 'standard', label: 'standard（既定）' },
   { key: 'igor', label: 'igor（やわらか）' },
-  { key: 'standard', label: 'standard' },
   { key: 'basic', label: 'basic' },
   { key: 'combined', label: 'combined' },
   { key: 'multidirectional', label: 'multidirectional' },

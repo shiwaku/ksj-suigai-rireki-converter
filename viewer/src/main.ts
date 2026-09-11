@@ -78,8 +78,9 @@ let reliefOn = false
 let reliefOpacity = DEFAULT_RELIEF_OPACITY
 let reliefRange: ReliefRange = DEFAULT_RELIEF_RANGE
 let hillshadeOn = true
-let hillshadeMethod: HillshadeMethod = 'igor'
-let hillshadeExag = HILLSHADE_PRESETS.igor.exaggeration
+// 既定は standard。igor はやわらかすぎて段彩に重ねたとき低地の起伏が読みにくい
+let hillshadeMethod: HillshadeMethod = 'standard'
+let hillshadeExag = HILLSHADE_PRESETS.standard.exaggeration
 let terrainOn = false
 let terrainExag = 1
 let contoursOn = false
