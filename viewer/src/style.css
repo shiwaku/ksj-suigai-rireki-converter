@@ -241,6 +241,16 @@ body {
   background: var(--hover);
 }
 
+/* 画面中央の DEM の細かさ。凡例の直下に置き、メッシュサイズだけ濃く出す */
+.dem-note {
+  color: var(--ink-2);
+}
+
+.dem-note strong {
+  color: var(--ink);
+  font-weight: 700;
+}
+
 /* ---- トグル ---- */
 .toggle {
   position: relative;
@@ -682,6 +692,14 @@ body {
 .pop-body {
   max-height: 300px;
   overflow-y: auto;
+}
+
+/* 地点についての一言（DEM の細かさ）。属性表の外、いちばん下 */
+.pop-foot {
+  padding: 6px 12px;
+  border-top: 1px solid var(--line);
+  font-size: 10.5px;
+  color: var(--ink-3);
 }
 
 .pop-item + .pop-item {

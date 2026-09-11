@@ -27,6 +27,7 @@ let bad = 0
 try {
   const L = await server.ssrLoadModule('/src/layers.ts')
   const T = await server.ssrLoadModule('/src/terrain.ts')
+  const C = await server.ssrLoadModule('/src/coverage.ts')
 
   const EVENT = '2000_09_h12_sinsui_t_add22.shp'
   const filters = [
@@ -66,6 +67,35 @@ try {
       if (errs.length) { bad++; console.error(`FAIL ${tag}`); errs.forEach(e => console.error('   ', e.message)) }
       else console.log(`ok   ${tag}`)
     }
+  }
+
+  // DEM 被覆（透明な問い合わせ用レイヤー）
+  {
+    const style = {
+      version: 8,
+      sources: { [C.COVERAGE_SOURCE]: C.coverageSourceSpec() },
+      layers: [C.coverageLayer()],
+    }
+    const errs = validateStyleMin(style)
+    if (errs.length) { bad++; console.error('FAIL dem-coverage'); errs.forEach(e => console.error('   ', e.message)) }
+    else console.log('ok   dem-coverage')
+  }
+
+  // 被覆 → 最も細かい DEM の選び方。合成規則（細かいソース優先）と一致すること
+  const DEM_CASES = [
+    [['glo30', 'jpdem10b', 'jpdem5a', 'jpdem1a'], 'jpdem1a', 1],   // 江東・能登・北アルプス・人吉
+    [['glo30', 'jpdem10b', 'jpdem5a'], 'jpdem5a', 5],              // 十勝
+    [['jpdem10b', 'glo30'], 'jpdem10b', 10],
+    [['glo30'], 'glo30', 30],
+    [['unknownsrc', 'jpdem10a'], 'jpdem10a', 10],                   // 分解能不明のソースは後ろへ
+    [[], null, null],
+  ]
+  for (const [codes, code, res] of DEM_CASES) {
+    const got = C.finestDem(codes)
+    const okv = got === null ? code === null : got.code === code && got.resolution === res
+    const tag = `dem finest [${codes.join(',')}] -> ${got ? `${got.code}/${got.resolution}m` : 'null'}`
+    if (okv) console.log(`ok   ${tag}`)
+    else { bad++; console.error(`FAIL ${tag}（期待 ${code}/${res}）`) }
   }
 
   // ---- 成因の判定を実際に評価する ----
