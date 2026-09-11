@@ -289,8 +289,11 @@ const formatValue = (key: string, v: unknown): string => {
 /**
  * クリック時のポップアップ本文。重なっている浸水域をすべて並べる。
  * 浸水実績は年をまたいで何枚も重なるため、1件だけ返して終わりにはしない。
+ *
+ * `footer` は地物の属性ではなく地点についての一言（クリック地点の DEM の細かさ）。
+ * 属性表の外に出し、重なった件数ぶん繰り返さない。
  */
-export function popupHtml(items: PopupItem[], total = items.length): string {
+export function popupHtml(items: PopupItem[], total = items.length, footer?: string): string {
   const row = (key: string, v: unknown): string =>
     `<tr><th>${escapeHtml(ATTR_LABELS[key] ?? key)}</th><td>${formatValue(key, v)}</td></tr>`
 
@@ -317,7 +320,8 @@ export function popupHtml(items: PopupItem[], total = items.length): string {
     items.length > 1
       ? `${total}件の浸水域${total > items.length ? `（うち${items.length}件を表示）` : ''}`
       : '浸水実績'
+  const foot = footer ? `<div class="pop-foot">${escapeHtml(footer)}</div>` : ''
   return `<div class="pop"><div class="pop-head">${escapeHtml(head)}</div><div class="pop-body">${items
     .map(section)
-    .join('')}</div></div>`
+    .join('')}</div>${foot}</div>`
 }

@@ -61,6 +61,16 @@ import {
   type ReliefRange,
 } from './relief'
 import { createEventPicker, type EventPicker } from './eventPicker'
+import {
+  COVERAGE_ID,
+  COVERAGE_SOURCE,
+  coverageLayer,
+  coverageSourceSpec,
+  demHint,
+  demLabel,
+  finestDem,
+  type DemInfo,
+} from './coverage'
 import { applyThemeAttr, initialTheme, type Theme } from './theme'
 import './style.css'
 
@@ -212,6 +222,7 @@ function renderHud(): void {
     `<b>build ${__BUILD_TIME__}</b><br>` +
     `zoom ${map.getZoom().toFixed(1)} · pitch ${map.getPitch().toFixed(0)} · base ${base}<br>` +
     `dem ${demMode} · hillshade ${hillshadeOn} · terrain ${terrainOn} · contours ${contoursOn}<br>` +
+    `dem@center ${demAt(map.project(map.getCenter()))?.code ?? '-'}<br>` +
     `mobile ${isMobile} · ctxLost ${ctxLostCount}<br>` +
     `中央${CENTER_PROBE_PX}pxの浸水域: ${rendered}<br>` +
     `<u>log</u><br>${diagLog.join('<br>')}`
@@ -241,6 +252,7 @@ const OWN_LAYER_IDS = new Set([
   HILLSHADE_ID,
   CONTOUR_LINE_ID,
   CONTOUR_TEXT_ID,
+  COVERAGE_ID,
 ])
 
 /**
@@ -307,6 +319,31 @@ function beforeIdFor(group: 'relief' | 'hillshade' | 'sinsui' | 'contour'): stri
   const hillshade = map.getLayer(FILL_ID) ? FILL_ID : contour
   if (group === 'hillshade') return hillshade
   return map.getLayer(HILLSHADE_ID) ? HILLSHADE_ID : hillshade
+}
+
+/**
+ * DEM 被覆（透明）。描画には出ず、地点の DEM の細かさを問い合わせるためだけに置く。
+ * 常に載せる。タイルは z14 で数百B〜十数KB と軽く、段彩を切っていても
+ * ポップアップの「この地点の DEM」で使う。
+ */
+function applyCoverage(): void {
+  whenStyleReady(() => {
+    removeLayer(COVERAGE_ID)
+    if (!map.getSource(COVERAGE_SOURCE)) map.addSource(COVERAGE_SOURCE, coverageSourceSpec())
+    // 見えないので積み順に意味はないが、いちばん下に置いて他のグループの規則を乱さない
+    map.addLayer(coverageLayer(), map.getLayer(RELIEF_ID) ? RELIEF_ID : beforeIdFor('relief'))
+  })
+}
+
+/**
+ * 画面座標の地点を覆う DEM のうち最も細かいもの。被覆タイルが未読込なら null。
+ * 被覆ポリゴンは z14 で数 m 単位に単純化されており、ソースの継ぎ目の数ピクセルは
+ * ぼかしで両方が混ざるので、境界付近では厳密ではない。
+ */
+function demAt(point: maplibregl.PointLike): DemInfo | null {
+  if (!map.getLayer(COVERAGE_ID)) return null
+  const feats = map.queryRenderedFeatures(point, { layers: [COVERAGE_ID] })
+  return finestDem(feats.map((f) => String((f.properties as { source?: unknown })?.source ?? '')).filter(Boolean))
 }
 
 /** 段彩（標高の色）。陰影起伏の下に敷く。 */
@@ -395,6 +432,7 @@ function applyLayers(): void {
   applySinsuiLayers()
   applyContours()
   applyTerrain()
+  applyCoverage()
 }
 
 // ---- 浸水域の軽い更新 ----
@@ -634,7 +672,30 @@ reliefOnEl.addEventListener('change', () => {
   reliefOn = reliefOnEl.checked
   reliefOptsEl.hidden = !reliefOn
   applyRelief()
+  renderDemNote()
 })
+
+/**
+ * 画面中央の DEM の細かさ。段彩のレンジを狭めても凹凸が出ないとき、
+ * 「窪地が無い」のか「DEM が粗くて出ていない」のかをここで区別できるようにする。
+ *
+ * 地物の問い合わせは安くないので render ごとではなく idle で更新する
+ * （被覆タイルが読み終わるのも idle のあと）。段彩を切っているあいだは触らない。
+ */
+const demNoteEl = el('dem-note')
+function renderDemNote(): void {
+  if (!reliefOn) return
+  const info = demAt(map.project(map.getCenter()))
+  if (!info) {
+    demNoteEl.textContent = '画面中央の DEM: 取得中…'
+    return
+  }
+  const label = document.createElement('strong')
+  label.textContent = demLabel(info)
+  const hint = demHint(info)
+  demNoteEl.replaceChildren('画面中央の DEM: ', label, hint ? `。${hint}` : '')
+}
+map.on('idle', renderDemNote)
 
 for (const r of RELIEF_RANGES) {
   const opt = document.createElement('option')
@@ -891,9 +952,13 @@ map.on('click', (ev) => {
     popup = null
     old.remove()
   }
+  // クリック地点の DEM の細かさ。段彩の色を「窪地が無い」と読んでよいかの手掛かり
+  const dem = demAt(ev.point)
   const p = new maplibregl.Popup({ closeButton: true, maxWidth: '340px' })
     .setLngLat(ev.lngLat)
-    .setHTML(popupHtml(items.slice(0, POPUP_MAX_ITEMS), items.length))
+    .setHTML(
+      popupHtml(items.slice(0, POPUP_MAX_ITEMS), items.length, dem ? `この地点の DEM: ${demLabel(dem)}` : undefined),
+    )
     .addTo(map)
   p.on('close', () => {
     if (popup === p) popup = null

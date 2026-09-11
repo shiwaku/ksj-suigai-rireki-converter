@@ -59,7 +59,8 @@ PMTiles は GitHub Pages 経由で配信している(Range Request / CORS 対応
 [Mapterhorn](https://mapterhorn.com/) の全球地形(段彩 / 陰影起伏 / 3D地形 / 等高線)の
 重ね合わせができる。段彩と陰影起伏を重ねると陰影段彩図になり、
 浸水域が地形のどこに乗っているかを読める。段彩の標高レンジは切り替えられ、
-0〜5m まで狭めると内水浸水の原因になる微小な窪地が現れる。ソースと開発方法は [`viewer/`](viewer/) を参照。
+0〜5m まで狭めると内水浸水の原因になる微小な窪地が現れる。凹凸の細かさは地域の DEM(1m / 5m / 10m メッシュ)に
+依存するため、画面中央とクリック地点でどの DEM が使われているかを表示する。ソースと開発方法は [`viewer/`](viewer/) を参照。
 
 特定の災害だけを見せるリンクも作れる(`?event=<元Shapefile名>`):
 
@@ -78,6 +79,7 @@ PMTiles は GitHub Pages 経由で配信している(Range Request / CORS 対応
 | `convert.py` | Shapefile 一括変換ツール |
 | `data/` | 入力 Shapefile |
 | `output/` | 変換結果(Pages から配信) |
+| `docs/` | 調査メモ([Mapterhorn の DEM 元データと地点ごとの解像度の調べ方](docs/mapterhorn-dem-sources.md)) |
 | `viewer/` | Web ビューワのソース(Vite + TypeScript + MapLibre) |
 | `app/` | ビューワのビルド成果物(Pages から配信、`viewer` の `npm run build` が生成) |
 
